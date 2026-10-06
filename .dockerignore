@@ -1,0 +1,7 @@
+data/
+paste
+*.md
+.envrc
+flake.nix
+flake.lock
+.git

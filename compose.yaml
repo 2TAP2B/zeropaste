@@ -1,0 +1,14 @@
+# zeropaste — plain HTTP app; TLS termination is a reverse-proxy concern.
+services:
+  paste:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      CREATE_KEY: "change-me" # create-gate passphrase; delete this line for a fully public instance
+    volumes:
+      - paste-data:/data
+    restart: unless-stopped
+
+volumes:
+  paste-data:
