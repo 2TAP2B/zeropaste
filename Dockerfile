@@ -1,7 +1,7 @@
 # build
 FROM golang:1.26-alpine AS build
 WORKDIR /src
-COPY go.mod main.go ./
+COPY go.mod go.sum main.go ./
 COPY web/ ./web/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/paste .
 
