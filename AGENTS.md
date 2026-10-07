@@ -14,7 +14,9 @@ Hard constraints (do not violate, do not "improve"):
 - **English UI only.**
 - Allowed Go version: 1.25+ (built and verified on 1.26.x).
 
-Out of scope by design (an agent must not add these): authentication *beyond the optional create-gate* (no user accounts per se), file/image uploads, paste editing or listing, comments, per-language syntax selection, a database.
+Out of scope by design (an agent must not add these): authentication *beyond the optional create-gate* (no user accounts per se), paste editing or listing (except the phase-2 identity dashboard when approved), comments, per-language syntax selection, a database.
+
+**Spec revision v0.3 (user approved):** file uploads ARE in scope now (phase-1); passkey accounts + reverse shares planned (phases 2-3). The zero-knowledge crypto contract (§2) is untouched: the server only ever stores ciphertext.
 
 ## 2. Crypto contract (non-negotiable)
 
@@ -67,6 +69,18 @@ Validation, in order, all failures produce 400:
 - `salt` (if non-empty): base64url decode to 8–32 bytes.
 
 Success: 200 `{"id": "<11-char base64url of 8 random bytes>"}`. File written as `<dir>/<id>.json`, mode 0600, data dir created 0700. `newID(dir)` retries on the (astronomically unlikely) collision **against the data dir** — a previous version checked `./` and was wrong; do not regress.
+
+### File uploads (chunked, resumable) — build on `/api/uploads`
+
+Config via env at startup: `MAX_BLOB` (default `2147483648` = 2 GiB, 1 MiB..64 GiB) total ciphertext per share; `CHUNK` (default `8388608` = 8 MiB, 64 KiB..64 MiB) per PUT and per range GET; `MAX_BLOB < CHUNK` is a fatal misconfig. Values are plain byte integers.
+
+- `POST /api/uploads` `{len, ttl, salt, burn}` → `{"id", "chunkSize": CHUNK, "chunks": ceil(len/CHUNK)}`. Body capped 1 KiB. Same ttl/salt validation as `POST /api/paste` (ttl shape only here; expiry computed at finish). Creates `data/uploads/<id>/upload.json` (`{len, ttl, salt, burn, created}`) 0600, dirs 0700. Id = 8 random bytes b64url, collision-checked against the uploads dir.
+- `PUT /api/uploads/{id}/{n}` — raw ciphertext chunk `n` (0-based). `validID` gates `{id}`; `n` strict int `0..chunks-1`; body `MaxBytesReader` at CHUNK+1, `1..CHUNK` bytes required. Overwrite = resume. **NOT rate limited** (a 2 GiB share is ~250 PUTs; body caps + temp quotas carry the protection). Behind the create-gate when enabled.
+- `DELETE /api/uploads/{id}` — `os.RemoveAll(session)`, idempotent 200 `{"ok": true}`. Public (abort must always work).
+- `POST /api/uploads/{id}/finish` — rate limited + gated like a paste create. Verifies every `n.part` exists with exact sizes (full chunks = CHUNK, last = len-(chunks-1)*CHUNK), joins to `<dir>/<id>.blob` 0600, writes meta `<dir>/<id>.json` (`{len, salt, burn, expires}`, no `data`), removes the session dir. Incomplete/off-size → 400, parts kept for retry, partial blob removed. Double finish → 200 idempotent.
+- `GET /api/paste/{id}/blob?offset=N` — ciphertext ranges (`no-store`, `application/octet-stream`), max CHUNK bytes from offset; off-range offset → 400; expired → 404 + file removed. Reader paginates 0..len.
+- Meta read for a bundle (`len > 0`) with `burn && salt==""`: expiry flips to `now-1+30s` grace window (var `burnWindowSec`) so the legitimate reader can finish the range downloads; janitor reaps both `<id>.json` and `<id>.blob` when expired. Text pastes keep exact read-then-delete. **`DELETE /api/paste/{id}` removes `.blob` too** (bundle dies whole, burn flag or not).
+- Janitor (`sweep`, shared with tests): also removes `uploads/<dir>` sessions whose manifest is missing or `created` older than 2h.
 
 ### Create-gate (optional auth in front of POST)
 
@@ -134,6 +148,7 @@ nix develop --command sh -c 'gofmt -l . && go vet ./... && go test ./... && esbu
 
 - `gofmt -l` prints nothing; vet and tests must be green; `tsc --noEmit` must typecheck `web/ts/` (strict, noUncheckedIndexedAccess) — type errors are the gate the old `node --check` syntactic pass can't catch. esbuild emits the minified bundle (`web/assets/app.js`, committed artifact — regen before testing the server).
 - Test suite (all in `main_test.go`, unreferenced helpers there): `TestRoundTrip` (create→read, metadata echo incl. `expires`), `TestBurnAfterRead` (2nd GET 404), `TestExpiredPaste404s` (rewinds expiry on disk: 404 + file removed), `TestBadRequests` (short data / bad ttl `2w` / `31d` / empty ttl / undecodable data / bad salt → all 400), `TestParseTTL` (valid table incl. `"10 min"`, `30 days`, `6H`; invalid `"0d"`, `"1w"`, `"1h30m"`, `"-5m"`, `"5"`, empty), `TestPassphrasePaste` (salt+burn: GET does NOT destroy, metadata echoed, `DELETE` → 200 → GET 404), `TestAssetsServed` (file 200 + dir listing 404), `TestIndexServed` (`/` and `/p/whatever` 200 with page, unknown path 404), `TestRateLimit` (30× 200 then 429), `TestPathValueAbuse` (charset/traversal/short ids → 404; DELETE same), `TestHealthz` (200 `ok`), `TestAuthGate` (with `CREATE_KEY` set: no header → 401, wrong key → 401, correct key → 200, paste publicly readable, healthz open).
+- Upload suite: `TestUploadRoundTrip` (odd-sized 3-chunk init/put/finish → meta `{len,...}` no `data` → paginated range reads equal the plaintext), `TestUploadResumeOverwrite` (PUT same chunk twice: latest wins), `TestUploadFinishMissingPart` (400 + parts survive + off-size chunk rejected; retry completes; double finish idempotent), `TestUploadAbortCleans` (chunk PUT after abort → 404, second abort idempotent), `TestUploadBadRequests` (len 0/-65 above cap/bad ttl/short salt → 400; chunk index out of range/junk/negative/bad-id charset → 4xx), `TestUploadSweep` (fresh session survives; `created` older than 2h → wiped), `TestBlobBurnExpiresOnRead` (meta read flips to grace window, blob stays reachable, expired+rereaped by janitor → both gone), `TestAuthGateUpload` (init + chunk PUTs: no header/wrong key → 401, correct key → 200/204; blobs/files publicly readable AFTER they exist).
 - Live smoke (expected results): request POST → GET returns `data`; burn paste second GET → 404; `31d` → 400; assets `200`; `/assets/` → 404; `curl -sI /` shows all four security headers.
 - Supply-chain audit: `nix shell nixpkgs#govulncheck nixpkgs#go -c sh -c 'CGO_ENABLED=0 govulncheck ./...'` → `No vulnerabilities found.` (There are no third-party Go deps; any `go.sum` is a regression.)
 
