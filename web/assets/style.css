@@ -27,12 +27,12 @@
     color: var(--text); font: inherit; font-size: .95rem;
     white-space: pre-wrap; word-break: break-word;
   }
-  .paste-view { min-height: 0; padding: .25rem 0; overflow-wrap: anywhere; }
+  .paste-view { min-height: 0; padding: 2.75rem .5rem .25rem 0; overflow-wrap: anywhere; }
   .paste-view code { font: inherit; }
   .paste-view pre { margin: 0; }
   .codewrap { position: relative; }
   .copybtn {
-    position: absolute; top: .4rem; right: .4rem; z-index: 1;
+    position: absolute; top: .5rem; right: .5rem; z-index: 1;
     display: flex; padding: .45rem; cursor: pointer;
     background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
     color: var(--muted); transition: color .15s, border-color .15s;
@@ -98,6 +98,9 @@
     button { justify-content: center; }
     textarea { min-height: 180px; font-size: 1rem; }
     .link-box input { flex-basis: auto; }
+    .paste-view { font-size: 1rem; }
+    .copybtn { padding: .65rem; }
+    .copybtn svg { width: 17px; height: 17px; }
   }
   .qrwrap {
     margin-top: 1rem; text-align: center;
