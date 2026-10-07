@@ -31,7 +31,7 @@ Out of scope by design (an agent must not add these): authentication *beyond the
 | `main.go` | Entire server: routing, handlers, validation, limiter, janitor, embedding. All logic lives here. |
 | `web/index.html` | Markup for all three views (compose / link / read). No inline JS or CSS — links below. |
 | `web/assets/style.css` | All styling. |
-| `web/assets/app.js` | All client logic incl. crypto helpers (`b64uFromBytes`, `bytesFromB64u`, `randomKey`, `deriveKey`, `seal`, `open_`). |
+| `web/ts/` | Typed TS sources (`app.ts` entry, `crypto.ts`, `theme.ts`, `ui.ts`, `read.ts`, `globals.d.ts`); strict `tsc` (`tsconfig.json`, DOM types only — WebCrypto/WebAuthn wrappers). Vanilla, **no framework**; direct DOM. |
 | `web/assets/highlight.min.js` | highlight.js v11.11.1 "common" build (~127 KB), fetched once from `https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js` and committed. Never hotlink. |
 | `web/assets/qrcode.min.js` | qrcode-generator v1.4.4 (~21 KB) from `https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js`, committed. QR is rendered client-side only. |
 | `web/assets/atom-one-dark.min.css` | highlight.js dark theme from the same release, committed. Paired with `atom-one-light.min.css`: both are linked with static `prefers-color-scheme` media (no-JS safe) and `applyTheme` pins the active one to `media="all"` (theme = `#hljs-dark` / `#hljs-light`). |
@@ -129,10 +129,10 @@ Same `validID` gate. Removes the file; idempotent (nonexistent → still 200 `{"
 ## 8. Verification protocol (must pass before "done")
 
 ```sh
-nix develop --command sh -c 'gofmt -l . && go vet ./... && go test ./... && node --check web/assets/app.js && go build -trimpath -ldflags="-s -w" -o paste .'
+nix develop --command sh -c 'gofmt -l . && go vet ./... && go test ./... && esbuild --bundle web/ts/app.ts --outfile=web/assets/app.js --minify --target=es2020 && tsc --noEmit && go build -trimpath -ldflags="-s -w" -o paste .'
 ```
 
-- `gofmt -l` prints nothing; vet and tests must be green; `node --check` must accept `app.js` — a JS syntax error silently kills every event handler while the page still renders, so this gate is mandatory (learned the hard way).
+- `gofmt -l` prints nothing; vet and tests must be green; `tsc --noEmit` must typecheck `web/ts/` (strict, noUncheckedIndexedAccess) — type errors are the gate the old `node --check` syntactic pass can't catch. esbuild emits the minified bundle (`web/assets/app.js`, committed artifact — regen before testing the server).
 - Test suite (all in `main_test.go`, unreferenced helpers there): `TestRoundTrip` (create→read, metadata echo incl. `expires`), `TestBurnAfterRead` (2nd GET 404), `TestExpiredPaste404s` (rewinds expiry on disk: 404 + file removed), `TestBadRequests` (short data / bad ttl `2w` / `31d` / empty ttl / undecodable data / bad salt → all 400), `TestParseTTL` (valid table incl. `"10 min"`, `30 days`, `6H`; invalid `"0d"`, `"1w"`, `"1h30m"`, `"-5m"`, `"5"`, empty), `TestPassphrasePaste` (salt+burn: GET does NOT destroy, metadata echoed, `DELETE` → 200 → GET 404), `TestAssetsServed` (file 200 + dir listing 404), `TestIndexServed` (`/` and `/p/whatever` 200 with page, unknown path 404), `TestRateLimit` (30× 200 then 429), `TestPathValueAbuse` (charset/traversal/short ids → 404; DELETE same), `TestHealthz` (200 `ok`), `TestAuthGate` (with `CREATE_KEY` set: no header → 401, wrong key → 401, correct key → 200, paste publicly readable, healthz open).
 - Live smoke (expected results): request POST → GET returns `data`; burn paste second GET → 404; `31d` → 400; assets `200`; `/assets/` → 404; `curl -sI /` shows all four security headers.
 - Supply-chain audit: `nix shell nixpkgs#govulncheck nixpkgs#go -c sh -c 'CGO_ENABLED=0 govulncheck ./...'` → `No vulnerabilities found.` (There are no third-party Go deps; any `go.sum` is a regression.)

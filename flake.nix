@@ -19,7 +19,9 @@
           go
           git
           ripgrep
-          nodejs # JS syntax gate: node --check web/assets/app.js
+          nodejs # typescript runner (tsc)
+          typescript
+          esbuild # bundles web/ts -> one embedded app.js
         ];
 
         shellHook = ''
