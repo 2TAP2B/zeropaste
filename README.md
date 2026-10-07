@@ -13,6 +13,7 @@ No accounts. No cookies. No request logs. No third-party Go dependencies.
 - Optional syntax highlighting (vendored highlight.js, no CDN calls) with auto language detection
 - Share link QR code, rendered client-side
 - Optional create-gate: one site passphrase in front of `POST /api/paste` (`CREATE_KEY` env); reads stay public — the link is the capability
+- Optional passkey accounts: register/sign in from the account pane (header icon). Creating pastes while signed in feeds the **active-shares overview** (the server sees only expiry/burn, never content). New registrations can be locked with `REG_OPEN=false` (sign-ins always stay open)
 - Hardened defaults: strict CSP, nosniff, DENY framing, no-referrer, 30 pastes/min/IP rate limit, slowloris timeouts, no directory listings
 
 ## Install

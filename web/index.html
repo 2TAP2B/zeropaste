@@ -8,9 +8,9 @@
 <meta property="og:description" content="share secrets, not plaintext — zero-knowledge pastes, encrypted in your browser">
 <meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.2.2" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.2.2" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.3.0">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.4.2" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.4.2" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.4.2">
 </head>
 <body>
 <main>
@@ -20,26 +20,33 @@
       <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
       <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>
     </button>
-    <button type="button" class="theme-toggle accbtn" id="accbtn" aria-label="Account">account</button>
+    <button type="button" class="theme-toggle accbtn" id="accbtn" popovertarget="accpanel" aria-label="Account" title="Account and shares">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+    </button>
   </header>
-  <div id="accpane" class="card hidden">
+
+  <!-- account lightbox: create account (passkey-only) + shares overview -->
+  <div id="accpanel" popover>
+    <b id="accpoll">create account or sign in - passkey only</b>
     <div class="accrow">
-      <input type="text" id="accname" class="accname" placeholder="a name for your passkeys" autocomplete="off">
-      <button type="button" id="regbtn">Register passkey</button>
-      <button type="button" id="loginbtn">Login</button>
+      <input type="text" id="accname" placeholder="a name for your passkeys" autocomplete="off">
+      <button type="button" id="regbtn">Create account</button>
+    </div>
+    <div class="accrow" id="loginrow">
+      <button type="button" id="loginbtn">Sign in with passkey</button>
       <button type="button" id="logoutbtn" class="hidden">Sign out</button>
     </div>
     <div id="accerr" class="hint danger hidden"></div>
-    <div class="hint">Passkeys never leave your device; diversify your browser handles the sign-in. Nothing here is removed: anonymous sharing stays anonymous.</div>
-  </div>
-  <section id="dashview" class="card hidden">
-    <div class="dashhead">
-      <b>your active shares</b>
-      <button type="button" id="refreshout">refresh</button>
+    <div id="browserhint" class="hint hidden">Passkeys need HTTPS (or localhost). You are on an insecure origin - open the site over its real domain.</div>
+    <div id="dashview" class="hidden">
+      <div class="dashhead">
+        <b>your active shares</b>
+        <button type="button" id="refreshout">refresh</button>
+      </div>
+      <div id="sharelist"></div>
+      <div class="hint">Rows re-open using the key remembered in this browser. Clearing site data forgets them.</div>
     </div>
-    <div id="sharelist"></div>
-    <div class="hint">Rows re-open using the key remembered in this browser. Clearing site data forgets them.</div>
-  </section>
+  </div>
 
 <!-- site gate: full-screen pre-screen when CREATE_KEY is set -->
   <section id="gate" class="card hidden">
@@ -162,6 +169,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.4.0"></script>
+<script src="/assets/app.js?v=0.4.2"></script>
 </body>
 </html>

@@ -49,12 +49,20 @@
     display: inline-flex; align-items: center; justify-content: center;
   }
   .theme-toggle svg { width: 1rem; height: 1rem; }
-  .accbtn { width: auto; padding: 0 .75rem; font-size: .75rem; letter-spacing: 0; }
-  #accpane { margin-bottom: 1rem; }
-  .accrow { display: flex; gap: .6rem; flex-wrap: wrap; }
-  .accname { flex: 1 1 10rem; width: auto; }
-  #accerr:not(:empty) { margin-top: .5rem; }
-  #dashview { margin-bottom: 1rem; }
+  .accbtn { width: auto; padding: 0 .55rem; }
+  .accbtn svg { width: 1.05rem; height: 1.05rem; }
+  #accpanel {
+    inset: auto; position: fixed; left: 50%; top: 50%; translate: -50% -50%;
+    width: min(500px, 92vw); max-height: 88vh; overflow: auto;
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.25rem; margin: 0; font: inherit;
+  }
+  #accpanel::backdrop { background: rgb(0 0 0 / .55); }
+  #accpanel #accpoll { display: block; margin-bottom: .75rem; color: var(--accent); font-weight: 700; }
+  #accpanel .accrow { display: flex; gap: .6rem; flex-wrap: wrap; margin: .5rem 0; }
+  #accpanel .accname, #accpanel #accname { flex: 1 1 10rem; }
+  #accpanel .hint { margin-top: .5rem; }
+  #dashview { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .75rem; }
   .dashhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: .6rem; }
   .dashhead b { color: var(--text); }
   #refreshout { font-size: .75rem; padding: .3rem .7rem; }

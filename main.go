@@ -958,10 +958,10 @@ func me(s *sessions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		i := s.identFrom(r)
 		if i == nil {
-			respond(w, 200, map[string]any{"name": ""})
+			respond(w, 200, map[string]any{"name": "", "open": registrationOpen()})
 			return
 		}
-		respond(w, 200, map[string]any{"name": i.Name, "id": i.ID})
+		respond(w, 200, map[string]any{"name": i.Name, "id": i.ID, "open": registrationOpen()})
 	}
 }
 
@@ -988,30 +988,31 @@ type ceremony struct {
 	mu  sync.Mutex
 	reg map[string]webauthn.SessionData
 	log map[string]webauthn.SessionData
-	// pending identity ids keyed by ceremony session id (registration path)
-	tokens map[string]string
+	// pending ceremony identity users (registration path); identity files
+	// are written only when finish succeeds.
+	tokens map[string]*identity
 }
 
 func newCeremony() *ceremony {
 	return &ceremony{
 		reg:    map[string]webauthn.SessionData{},
 		log:    map[string]webauthn.SessionData{},
-		tokens: map[string]string{},
+		tokens: map[string]*identity{},
 	}
 }
 
-func (c *ceremony) token(id string) (string, bool) {
+func (c *ceremony) pending(id string) (*identity, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	v, ok := c.tokens[id]
+	u, ok := c.tokens[id]
 	delete(c.tokens, id)
-	return v, ok
+	return u, ok
 }
 
-func (c *ceremony) setToken(id, uid string) {
+func (c *ceremony) setPending(id string, u *identity) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.tokens[id] = uid
+	c.tokens[id] = u
 }
 
 func (c *ceremony) putReg(id string, s webauthn.SessionData) {
@@ -1078,6 +1079,10 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 		Name string `json:"name"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !registrationOpen() && s.identFrom(r) == nil {
+			httpError(w, 403, "passkey registration is closed on this instance")
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 		var q req
 		_ = json.NewDecoder(r.Body).Decode(&q) // name optional; anonymous register allowed
@@ -1101,7 +1106,7 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 			return
 		}
 		c.putReg(id, *sd)
-		c.setToken(id, user.ID) // remembers which identity the ceremony references
+		c.setPending(id, &user) // the pending identity rides in memory; not yet on disk
 		respond(w, 200, map[string]any{"options": creation, "sessionId": id, "name": user.Name})
 	}
 }
@@ -1122,14 +1127,9 @@ func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFun
 			httpError(w, 500, "ceremony failed")
 			return
 		}
-		uid, ok := c.token(sid)
+		user, ok := c.pending(sid)
 		if !ok {
 			httpError(w, 400, "unknown session")
-			return
-		}
-		user := loadIdentity(filepath.Join(s.dir, "identities"), uid)
-		if user == nil {
-			httpError(w, 500, "identity missing")
 			return
 		}
 		cred, err := wa.FinishRegistration(user, sd, r)
@@ -1349,4 +1349,19 @@ func (si *shareIndex) list() http.HandlerFunc {
 		}
 		respond(w, 200, out)
 	}
+}
+
+// registrationOpen: server-wide switch for NEW identity registrations
+// (REG_OPEN env; default true). Subjects with an existing session can always
+// attach more passkeys - closing registration only locks fresh accounts.
+func registrationOpen() bool {
+	v := strings.TrimSpace(os.Getenv("REG_OPEN"))
+	if v == "" {
+		return true
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		log.Fatalf("REG_OPEN: %q invalid, want true/false", v)
+	}
+	return b
 }

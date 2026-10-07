@@ -41,6 +41,15 @@ in
         secret never lands in the world-readable store.
       '';
     };
+
+    registrationOpen = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        REG_OPEN: whether NEW passkey identities can register. Sign-ins stay
+        open regardless; existing sessions can always attach more passkeys.
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
@@ -48,6 +57,7 @@ in
       description = "zeropaste — zero-knowledge paste sharing";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
+      environment = mkIf (!cfg.registrationOpen) { REG_OPEN = "false"; };
 
       serviceConfig = {
         ExecStart = "${cfg.package}/bin/zeropaste -addr ${cfg.listenAddress} -data /var/lib/zeropaste";

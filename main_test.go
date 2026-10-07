@@ -745,3 +745,40 @@ func TestSharesRecordAndList(t *testing.T) {
 		t.Fatal("ownership row was not pruned with the paste")
 	}
 }
+
+func TestRegistrationClosed(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	t.Setenv("REG_OPEN", "false")
+	h := build(dir, "")
+
+	// anonymous register -> 403
+	rec := postTo(t, h, "/api/identity/register/begin", `{"name":"x"}`, "")
+	if rec.Code != 403 {
+		t.Fatalf("closed register: got %d, want 403", rec.Code)
+	}
+	// login stays open (nothing registered -> 404 from begin... served as 404-shaped error)
+	rec = postTo(t, h, "/api/identity/login/begin", "", "")
+	if rec.Code != 200 && rec.Code != 404 {
+		t.Fatalf("login begin when closed: got %d, want 200 (allowlist may be empty)", rec.Code)
+	}
+	// signed-in attach allowed even when closed
+	cookie := sessionCookieFor(s)
+	req := httptest.NewRequest("POST", "/api/identity/register/begin", strings.NewReader(`{}`))
+	req.Header.Add("Cookie", cookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("attach register when closed: got %d %s, want options", rec.Code, rec.Body)
+	}
+	// me advertises openness
+	req = httptest.NewRequest("GET", "/api/me", nil)
+	req.Header.Add("Cookie", cookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var me map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &me)
+	if me["open"] != false {
+		t.Fatalf("open flag: %+v", me)
+	}
+}
