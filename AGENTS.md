@@ -37,7 +37,9 @@ Out of scope by design (an agent must not add these): authentication *beyond the
 | `web/assets/atom-one-dark.min.css` | highlight.js theme from the same release, committed. |
 | `main_test.go` | httptest-based suite (see §8). |
 | `go.mod` | `module paste`, `go 1.25`, empty require block. |
-| `flake.nix`, `.envrc`, `flake.lock` | Nix dev shell (Go via nixpkgs unstable, git, ripgrep); `.envrc` contains exactly `use flake`. |
+| `flake.nix`, `.envrc`, `flake.lock` | Nix: dev shell (Go via nixpkgs unstable, git, ripgrep, node), package (see `package.nix`), NixOS module (see `module.nix`); `.envrc` contains exactly `use flake`. |
+| `package.nix` | Single Go derivation: `buildGoModule`, `vendorHash = null` (stdlib only), `CGO_ENABLED=0`, ldflags `-s -w`; binary renamed `paste` → `zeropaste` (avoids colliding with coreutils `paste` in PATH). MIT license. |
+| `module.nix` | `services.zeropaste`: `enable`, `listenAddress` (default `127.0.0.1:8080`), `createKeyFile` (EnvironmentFile — secrets never in the option system/store). systemd: `DynamicUser`, `StateDirectory = zeropaste` (`/var/lib/zeropaste`), `Restart = on-failure`, sandbox hardening. |
 | `Dockerfile` | Three-stage build (see §6). |
 | `compose.yaml` | Single service, port 8080, named volume `paste-data` → `/data`. |
 | `.dockerignore` | Excludes `data/`, `paste`, `*.md`, `.envrc`, `flake.*`, `.git`. |
@@ -118,7 +120,7 @@ Same `validID` gate. Removes the file; idempotent (nonexistent → still 200 `{"
 
 ## 7. Dev environment (NixOS)
 
-- `flake.nix`: single `nixpkgs` (`github:NixOS/nixpkgs/nixos-unstable`) input, `devShells.x86_64-linux.default = mkShell` with packages `go`, `git`, `ripgrep`. Self-contained — no external flake inputs.
+- `flake.nix`: single `nixpkgs` (`github:NixOS/nixpkgs/nixos-unstable`) input. Outputs: `devShells.x86_64-linux.default = mkShell` (packages `go`, `git`, `ripgrep`, `nodejs`), `packages.${system}.default` (see `package.nix`), `nixosModules.zeropaste` (see `module.nix`). Self-contained — no external flake inputs.
 - `.envrc`: `use flake` (user runs `direnv allow` once).
 - Run everything inside the shell: `nix develop --command sh -c '...'`.
 - hljs assets were fetched over TLS from jsdelivr (see §3) — if rebuilding from zero, fetch those two files before building.
