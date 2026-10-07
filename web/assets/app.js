@@ -164,6 +164,8 @@ function drawQR(text) {
   qr.make();
   box.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
 }
+// the link itself is the affordance: tap it to copy
+$("share").addEventListener("click", () => copy($("share").value, $("copylink")));
 $("copylink").addEventListener("click", () => copy($("share").value, $("copylink")));
 $("again").addEventListener("click", () => {
   $("text").value = ""; $("burn").setAttribute("aria-pressed", "false"); $("pass").value = "";
