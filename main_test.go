@@ -618,3 +618,130 @@ func TestAuthGateUpload(t *testing.T) {
 		t.Fatalf("gated chunk: got %d %s, want 204", rec.Code, rec.Body)
 	}
 }
+
+// --- phase 2: identity sessions + active-shares dashboard ---
+// (the webauthn ceremony itself needs a browser authenticator; these tests
+// cover session-cookie auth, recording, and the dashboard listing.)
+
+func testSession(t *testing.T, dir string) *sessions {
+	t.Helper()
+	s := newSessions(dir)
+	ident := identity{
+		ID:   newSessionID(),
+		Name: "friend-of-tobias",
+	}
+	if err := s.saveIdentity(&ident); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func sessionCookieFor(s *sessions) string {
+	return "zp.session=" + s.sign(sessionClaims{
+		Sub: func() string {
+			// resolve the stored identity id
+			// (only one identity was stored for this dir)
+			entries, _ := os.ReadDir(filepath.Join(s.dir, "identities"))
+			return strings.TrimSuffix(entries[0].Name(), ".json")
+		}(),
+		Exp: time.Now().Add(time.Hour).Unix(),
+	})
+}
+
+func TestMeEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+
+	if rec := get(h, "/api/me"); rec.Code != 200 || strings.Contains(rec.Body.String(), `"name":"friend`) {
+		t.Fatalf("anon me: got %d %s, want empty name", rec.Code, rec.Body)
+	}
+	if rec := get(h, "/api/me"); rec.Code == 200 {
+		var me struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &me)
+		if me.Name != "" {
+			t.Fatalf("anon me leaked a name: %s", rec.Body)
+		}
+	}
+
+	req := httptest.NewRequest("GET", "/api/me", nil)
+	req.Header.Set("Cookie", sessionCookieFor(s))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "friend-of-tobias") {
+		t.Fatalf("ident me: got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestSharesRecordAndList(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+	// signed-in create records a row
+	req := httptest.NewRequest("POST", "/api/paste", strings.NewReader(fmt.Sprintf(`{"data":%q,"ttl":"1h"}`, fakePayload())))
+	req.Header.Add("Cookie", cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("create: %d", rec.Code)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+
+	// record kind text: row appears, kind from meta; no data leak
+	req = httptest.NewRequest("GET", "/api/shares", nil)
+	req.Header.Add("Cookie", cookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var rows []struct {
+		ID      string `json:"id"`
+		Kind    string `json:"kind"`
+		Data    string `json:"data,omitempty"`
+		Expires int64  `json:"expires"`
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &rows) != nil {
+		t.Fatalf("shares parse: %s", rec.Body)
+	}
+	if len(rows) != 1 || rows[0].ID != created.ID || rows[0].Kind != "text" || rows[0].Data != "" {
+		t.Fatalf("rows: %+v", rows)
+	}
+
+	// anon create records nothing
+	rec = post(t, h, fmt.Sprintf(`{"data":%q,"ttl":"1h"}`, fakePayload()))
+	if rec.Code != 200 {
+		t.Fatalf("anon create: %d", rec.Code)
+	}
+	req = httptest.NewRequest("GET", "/api/shares", nil)
+	req.Header.Add("Cookie", cookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	_ = json.Unmarshal(rec.Body.Bytes(), &rows)
+	if len(rows) != 1 {
+		t.Fatalf("anon create leaked into shares: %d rows", len(rows))
+	}
+
+	// expired shares self-prune from the listing
+	if err := os.WriteFile(filepath.Join(dir, created.ID+".json"),
+		[]byte(`{"data":"x","expires":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest("GET", "/api/shares", nil)
+	req.Header.Add("Cookie", cookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	_ = json.Unmarshal(rec.Body.Bytes(), &rows)
+	if len(rows) != 0 {
+		t.Fatalf("expired row survived: %+v", rows)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "shares", func() string {
+		entries, _ := os.ReadDir(filepath.Join(dir, "identities"))
+		return strings.TrimSuffix(entries[0].Name(), ".json")
+	}(), created.ID+".json")); !os.IsNotExist(err) {
+		t.Fatal("ownership row was not pruned with the paste")
+	}
+}
