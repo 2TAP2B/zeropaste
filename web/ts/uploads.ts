@@ -3,7 +3,9 @@ import { assembleEnv } from "./bundle";
 
 // Byte-level caps mirror the server env defaults (MAX_BLOB). The server is
 // the authority; init rejects oversized shares regardless of this constant.
-export const CLIENT_MAX_BLOB = 2 << 30;
+// NOTE: 2 ** 31, not 2 << 30 - JS bitwise shifts are 32-bit signed, so the
+// shift form yields -2147483648 and silently caps every share at zero.
+export const CLIENT_MAX_BLOB = 2 ** 31;
 
 export interface UploadResult {
   id: string; // finished paste id
