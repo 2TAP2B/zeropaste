@@ -4,12 +4,12 @@ export function humanSize(n: number): string {
   if (n < 1024) return n + " B";
   const units = ["KB", "MB", "GB"];
   let v = n;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) {
+  let u = 0; // divisions done: 1 = KB, 2 = MB, 3 = GB
+  while (v >= 1024 && u < units.length) {
     v /= 1024;
     u++;
   }
-  return (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) + " " + units[u];
+  return (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) + " " + units[u - 1];
 }
 
 export function show(id: "gate" | "compose" | "linkbox" | "read"): void {
