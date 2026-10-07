@@ -6,14 +6,20 @@
 <meta name="robots" content="noindex">
 <meta property="og:title" content="zeropaste">
 <meta property="og:description" content="share secrets, not plaintext — zero-knowledge pastes, encrypted in your browser">
-<meta name="theme-color" content="#0b0e14">
+<meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
 <link rel="stylesheet" href="/assets/atom-one-dark.min.css">
-<link rel="stylesheet" href="/assets/style.css?v=0.1.4">
+<link rel="stylesheet" href="/assets/style.css?v=0.2.1">
 </head>
 <body>
 <main>
-  <a class="brand" href="/">zeropaste <span>/ zero-knowledge pastes</span></a>
+  <header class="top">
+    <a class="brand" href="/">zeropaste <span>/ zero-knowledge pastes</span></a>
+    <button type="button" class="theme-toggle" id="theme" aria-label="Toggle light and dark theme" title="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>
+    </button>
+  </header>
 
 <!-- site gate: full-screen pre-screen when CREATE_KEY is set -->
   <section id="gate" class="card hidden">
@@ -95,6 +101,6 @@
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.1.6"></script>
+<script src="/assets/app.js?v=0.2.1"></script>
 </body>
 </html>

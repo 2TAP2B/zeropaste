@@ -2,6 +2,20 @@
 const $ = (id) => document.getElementById(id);
 const enc = new TextEncoder(), dec = new TextDecoder();
 
+// --- theme toggle (localStorage holds only "light"/"dark") ---
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("zp.theme", t); } catch { /* private mode: session-only */ }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = t === "light" ? "#a78bfa" : "#1c1917";
+}
+const savedTheme = (() => {
+  try { return localStorage.getItem("zp.theme"); } catch { return null; }
+})();
+applyTheme(savedTheme || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+$("theme").addEventListener("click", () =>
+  applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"));
+
 // --- base64url helpers ---
 function b64uFromBytes(bytes) {
   let s = "";
