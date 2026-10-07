@@ -1,7 +1,30 @@
+  /*
+   * Two themes, same ten brand colors.
+   * Light: lavender page, purple primary button (#a78bfa/#fff), purple cards.
+   * Dark: stone-black page (#1c1917), muted purple cards (#3f324a), luminous
+   * inverted button (#c0aafd/#1c1917).
+   * System preference is the CSS default (no-JSSafe); the toggle pins
+   * data-theme="light"/"dark" explicitly.
+   */
   :root {
-    --bg: #0b0e14; --surface: #12161f; --border: #232a38;
-    --text: #d7dce6; --muted: #7d8799; --accent: #a855f7; --accent-h: #c084fc;
+    --bg: #f3e5f5; --surface: #e9d8fd; --border: #d8b4fe;
+    --text: #374151; --muted: #4b5563;
+    --accent: #a78bfa; --accent-h: #c084fc; --on-accent: #fff;
+    --danger: #dc2626; --ok: #166534;
+  }
+  :root[data-theme="dark"] {
+    --bg: #1c1917; --surface: #3f324a; --border: #4a3d5a;
+    --text: #d1d5db; --muted: #a5a0ad;
+    --accent: #c0aafd; --accent-h: #d8c9ff; --on-accent: #1c1917;
     --danger: #e5607a; --ok: #4ade80;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1c1917; --surface: #3f324a; --border: #4a3d5a;
+      --text: #d1d5db; --muted: #a5a0ad;
+      --accent: #c0aafd; --accent-h: #d8c9ff; --on-accent: #1c1917;
+      --danger: #e5607a; --ok: #4ade80;
+    }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -12,9 +35,26 @@
     line-height: 1.5; -webkit-text-size-adjust: 100%;
   }
   main { width: 100%; max-width: 680px; }
+  .top {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 1.5rem; gap: .75rem;
+  }
   .brand {
-    display: inline-block; font-size: 1.1rem; font-weight: 700; letter-spacing: .05em;
-    color: var(--accent); margin-bottom: 1.5rem; user-select: none; text-decoration: none;
+    font-size: 1.1rem; font-weight: 700; letter-spacing: .05em;
+    color: var(--accent); user-select: none; text-decoration: none;
+    margin-bottom: 0; flex: 1 1 auto; min-width: 0;
+  }
+  .theme-toggle {
+    width: 2.1rem; height: 2.1rem; padding: .3rem; flex: 0 0 auto;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .theme-toggle svg { width: 1rem; height: 1rem; }
+  .theme-toggle .sun { display: none; }
+  :root[data-theme="light"] .theme-toggle .sun { display: block; }
+  :root[data-theme="light"] .theme-toggle .moon { display: none; }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .theme-toggle .sun { display: block; }
+    :root:not([data-theme="dark"]) .theme-toggle .moon { display: none; }
   }
   .brand span { color: var(--muted); font-weight: 400; }
   .card {
@@ -61,7 +101,7 @@
   button.toggle[aria-pressed="true"] { color: var(--danger); border-color: var(--danger); }
   button.toggle[aria-pressed="true"]:hover { border-color: var(--danger); }
   button.primary {
-    background: var(--accent); border-color: var(--accent); color: #fff;
+    background: var(--accent); border-color: var(--accent); color: var(--on-accent);
     font-weight: 600;
   }
   button.primary:hover { background: var(--accent-h); border-color: var(--accent-h); }
