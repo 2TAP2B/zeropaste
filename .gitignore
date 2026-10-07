@@ -1,4 +1,6 @@
 paste
+result
+result-*
 data/
 *.log
 .direnv/
