@@ -93,6 +93,7 @@
   .field-label { font-size: .75rem; color: var(--muted); }
   #ttl { width: 140px; }
   .burnrow { align-items: flex-end; }
+  .burnrow #pass { width: auto; flex: 1 1 12rem; min-width: 8rem; }
   input[type="password"], input[type="text"] { cursor: text; width: 100%; }
   input[type="password"]:focus, input[type="text"]:focus { outline: none; border-color: var(--accent); }
   select:hover, button:hover { border-color: var(--accent); }
@@ -158,6 +159,7 @@
     select, button, input[type="text"], input[type="password"] { width: 100%; }
     .copybtn { width: auto; justify-content: center; }
     #ttl { width: 100%; }
+    .burnrow #pass { width: 100%; }
     button { justify-content: center; }
     textarea { min-height: 180px; font-size: 1rem; }
     .link-box input { flex-basis: auto; }

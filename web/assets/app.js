@@ -209,10 +209,12 @@ async function fetchPaste() {
 function renderPaste(paste, text) {
   $("pasteview").textContent = text;
   if (paste.hl && window.hljs) hljs.highlightElement($("pasteview"));
-  $("expiresnote").textContent = paste.expires ? expiresIn(paste.expires) : "";
+  $("expiresnote").textContent = paste.burn ? "" : (paste.expires ? expiresIn(paste.expires) : "");
   if (paste.burn) {
-    $("burnnote").textContent = "This paste was burned — the link is now dead.";
+    $("burnnote").textContent = "This paste was burned - the link is now dead.";
     fetch(`/api/paste/${paste.id}`, { method: "DELETE" }).catch(() => {});
+  } else {
+    $("burnnote").textContent = "";
   }
   $("unlock").classList.add("hidden");
   $("readbody").classList.remove("hidden");
