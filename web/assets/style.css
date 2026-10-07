@@ -109,6 +109,43 @@
   button.primary:disabled { opacity: .6; cursor: wait; }
   .hint { font-size: .8rem; color: var(--muted); margin-top: .75rem; }
   .hint.danger { color: var(--danger); }
+  #dropzone {
+    border: 1px dashed var(--border); border-radius: 8px;
+    margin-top: .75rem; padding: .8rem 1rem;
+    font-size: .8rem; color: var(--muted); text-align: center;
+    cursor: pointer; user-select: none;
+    transition: border-color .15s, color .15s;
+  }
+  #dropzone:hover, #dropzone.drag { border-color: var(--accent); color: var(--text); }
+  #files { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; }
+  .chip {
+    display: inline-flex; align-items: center; gap: .5rem;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: .3rem .5rem; font-size: .78rem; color: var(--text); max-width: 100%;
+  }
+  .chipsz { color: var(--muted); white-space: nowrap; }
+  .chip button {
+    background: none; border: none; padding: 0 .1rem; margin: 0;
+    font: inherit; color: var(--muted); cursor: pointer;
+  }
+  .chip button:hover { color: var(--danger); }
+  .progwrap { display: flex; align-items: center; gap: .75rem; margin-top: .75rem; }
+  #progbar {
+    flex: 1; height: 8px; background: var(--border); border-radius: 999px; overflow: hidden;
+  }
+  #progfill { height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .2s; }
+  #proglabel { font-size: .75rem; color: var(--muted); white-space: nowrap; }
+  #progcancel { font-size: .75rem; padding: .35rem .7rem; }
+  #filelist { display: flex; flex-direction: column; gap: .4rem; margin-top: .75rem; }
+  .filerow {
+    display: flex; align-items: center; gap: .75rem;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: .45rem .7rem;
+  }
+  .filedata { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .filedata.name { flex: 1 1 auto; }
+  .filedata:first-child { flex: 1 1 auto; }
+  .filesave { font-size: .75rem; padding: .3rem .7rem; flex: 0 0 auto; }
   .link-box {
     margin-top: 1rem; display: flex; gap: .5rem; align-items: stretch; flex-wrap: wrap;
   }
