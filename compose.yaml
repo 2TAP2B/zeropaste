@@ -1,4 +1,4 @@
-# zeropaste — plain HTTP app; TLS termination is a reverse-proxy concern.
+# zeropaste - plain HTTP app; TLS termination is a reverse-proxy concern.
 services:
   paste:
     image: ghcr.io/2tap2b/zeropaste:latest
@@ -6,6 +6,7 @@ services:
       - "8080:8080"
     environment:
       CREATE_KEY: "change-me" # create-gate passphrase; delete this line for a fully public instance
+      # REG_OPEN: "false"      # set to lock NEW passkey registrations; sign-ins stay open
     volumes:
       - paste-data:/data
     restart: unless-stopped
