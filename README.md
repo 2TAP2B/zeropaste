@@ -17,18 +17,35 @@ No accounts. No cookies. No request logs. No third-party Go dependencies.
 
 ## Install
 
+Docker (image from GHCR, ~9 MB — nothing to build):
+
+```sh
+docker run -d --name zeropaste -p 8080:8080 -v paste-data:/data ghcr.io/2tap2b/zeropaste:latest
+```
+
+or with compose:
+
+```yaml
+services:
+  paste:
+    image: ghcr.io/2tap2b/zeropaste:latest
+    ports: ["8080:8080"]
+    volumes: [paste-data:/data]
+    restart: unless-stopped
+    environment:
+      CREATE_KEY: "change-me" # create-gate passphrase; delete for a fully public instance
+volumes:
+  paste-data:
+```
+
+The app UI also carries a one-click quick start (footer → *self-host*).
+
 From source (Go 1.25+):
 
 ```sh
 git clone https://github.com/2TAP2B/zeropaste && cd zeropaste
 go build -trimpath -ldflags="-s -w" -o paste .
 ./paste                     # http://127.0.0.1:8080
-```
-
-Docker:
-
-```sh
-docker compose up -d --build   # port 8080, data in the paste-data volume
 ```
 
 Production: the app speaks plain HTTP and is proxy-agnostic. Put any TLS-capable reverse proxy in front; HSTS belongs there, not in the app. The rate limiter reads the last `X-Forwarded-For` entry, which is what a typical proxy appends. Shares links are built in the browser from the address you opened, so there is no base-URL config and never will be.

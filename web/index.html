@@ -10,7 +10,7 @@
 <title>zeropaste</title>
 <link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.2.2" media="(prefers-color-scheme: light)">
 <link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.2.2" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.2.2">
+<link rel="stylesheet" href="/assets/style.css?v=0.2.4">
 </head>
 <body>
 <main>
@@ -94,14 +94,45 @@
 
   <footer class="foot">
     <div>
-      <b>zeropaste</b> — encrypted in your browser · self-hosted ·
-      <a href="https://github.com/2TAP2B/zeropaste" rel="noopener">GitHub</a>
+      <b>zeropaste</b> — zero-knowledge pastes ·
+      <button type="button" class="foot-link" popovertarget="quickstart">self-host</button> ·
+      <a href="https://github.com/2TAP2B/zeropaste" rel="noopener">source code</a>
     </div>
   </footer>
+
+  <!-- quick-start lightbox: native popover, zero JS to open -->
+  <div id="quickstart" popover>
+    <b>self-host in 30 seconds</b>
+    <div class="qs-block">
+      <button type="button" class="copybtn" aria-label="Copy docker command" data-copy="qs-run">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+      </button>
+      <pre><code id="qs-run">docker run -d --name zeropaste -p 8080:8080 -v paste-data:/data ghcr.io/2tap2b/zeropaste:latest</code></pre>
+    </div>
+    <div class="qs-label">or compose.yaml</div>
+    <div class="qs-block">
+      <button type="button" class="copybtn" aria-label="Copy compose file" data-copy="qs-compose">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+      </button>
+      <pre><code id="qs-compose">services:
+  paste:
+    image: ghcr.io/2tap2b/zeropaste:latest
+    ports:
+      - "8080:8080"
+    environment:
+      CREATE_KEY: "change-me" # site passphrase for creating; delete line for fully public
+    volumes:
+      - paste-data:/data
+    restart: unless-stopped
+volumes:
+  paste-data:</code></pre>
+    </div>
+    <div class="hint">Plain HTTP; put your TLS reverse proxy in front. Open the address and share — links assemble client-side.</div>
+  </div>
 </main>
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.2.2"></script>
+<script src="/assets/app.js?v=0.2.4"></script>
 </body>
 </html>
