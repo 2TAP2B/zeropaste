@@ -1,13 +1,77 @@
 import { $ } from "./dom";
 import { randomKey, deriveKey, seal, siteKey, b64uFromBytes } from "./crypto";
-import { show, copy, drawQR } from "./ui";
+import { show, copy, drawQR, humanSize } from "./ui";
 import { initTheme } from "./theme";
 import { readView } from "./read";
+import { uploadBundle, abortUpload, UploadAborted } from "./uploads";
+import { selfcheck } from "./selfcheck";
 
 const burnOn = (): boolean => $("burn").getAttribute("aria-pressed") === "true";
 $("burn").addEventListener("click", () =>
   $("burn").setAttribute("aria-pressed", burnOn() ? "false" : "true"),
 );
+
+// ---- file attachments ----
+let picked: File[] = [];
+const dropzone = $("dropzone") as HTMLElement;
+const fileinput = $("fileinput") as HTMLInputElement;
+
+function addFiles(list: FileList | File[]): void {
+  const incoming = Array.from(list).filter((f) => f.size >= 0);
+  for (const f of incoming) if (!picked.some((k) => k === f)) picked.push(f);
+  renderChips();
+}
+
+function renderChips(): void {
+  const box = $("files") as HTMLElement;
+  box.textContent = "";
+  for (const f of picked) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = f.name;
+    const size = document.createElement("span");
+    size.className = "chipsz";
+    size.textContent = humanSize(f.size);
+    const x = document.createElement("button");
+    x.type = "button";
+    x.setAttribute("aria-label", "Remove " + f.name);
+    x.textContent = "×";
+    x.addEventListener("click", () => {
+      picked = picked.filter((k) => k !== f);
+      renderChips();
+    });
+    chip.append(size, x);
+    box.append(chip);
+  }
+  box.classList.toggle("hidden", picked.length === 0);
+  // textarea repurposes as the note field when files ride along
+  ($("text") as HTMLTextAreaElement).placeholder = picked.length
+    ? "Optional note - shown above the files"
+    : "Type or paste anything - text, passwords, snippets…";
+}
+
+dropzone.addEventListener("click", () => fileinput.click());
+fileinput.addEventListener("change", () => {
+  if (fileinput.files) addFiles(fileinput.files);
+  fileinput.value = "";
+});
+dropzone.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  dropzone.classList.add("drag");
+});
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
+dropzone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropzone.classList.remove("drag");
+  if (e.dataTransfer?.files.length) addFiles(e.dataTransfer.files);
+});
+
+// submit enabled iff there is something to share
+function validateReady(): void {
+  const ta = $("text") as HTMLTextAreaElement;
+  ($("create") as HTMLButtonElement).disabled = !ta.value && picked.length === 0;
+}
+$("text").addEventListener("input", validateReady);
 
 // create-gate passphrase: revealed only when the server answers 401;
 // kept in sessionStorage (per tab), never localStorage, never a cookie.
@@ -50,32 +114,88 @@ async function createPaste(text: string): Promise<{ id: string; keyB64: string; 
   return { id, keyB64, pass };
 }
 
+let activeAbort: AbortController | null = null;
+let activeUploadId = "";
+
 $("create").addEventListener("click", async () => {
   const ta = $("text") as HTMLTextAreaElement;
   const text = ta.value;
-  if (!text) {
+  if (!text && picked.length === 0) {
     ta.focus();
     return;
   }
   const btn = $("create") as HTMLButtonElement;
   btn.disabled = true;
+  $("prog").classList.remove("hidden");
+  const fill = document.getElementById("progfill") as HTMLElement;
+  const label = document.getElementById("proglabel") as HTMLElement;
+  activeAbort = new AbortController();
+  progress(0, "encrypt");
   try {
-    const out = await createPaste(text);
+    const out =
+      picked.length === 0
+        ? await createPaste(text)
+        : await uploadBundle({
+            note: text,
+            files: picked,
+            ttl: ($("ttl") as HTMLInputElement).value,
+            burn: burnOn(),
+            pass: ($("pass") as HTMLInputElement).value,
+            onProgress: progress,
+            onSession: (id) => (activeUploadId = id),
+            signal: activeAbort.signal,
+          });
     const link = location.origin + "/p/" + out.id + (out.keyB64 ? "#" + out.keyB64 : "");
     ($("share") as HTMLInputElement).value = link;
     ($("passnote") as HTMLElement).classList.toggle("hidden", !out.pass);
     drawQR(link);
     $("composeerr").classList.add("hidden");
+    picked = [];
+    renderChips();
     show("linkbox");
   } catch (e) {
     if (e && typeof e === "object" && "silent" in e) return; // handled: gate reroute
+    if (activeUploadId) abortUpload(activeUploadId); // cancel: kill the temp session
     const err = $("composeerr");
-    err.textContent = e instanceof Error ? e.message : "Failed to create paste.";
+    err.textContent =
+      e instanceof UploadAborted || activeAbort?.signal.aborted
+        ? "Upload cancelled."
+        : e instanceof Error
+          ? e.message
+          : "Failed to create paste.";
     err.classList.remove("hidden");
   } finally {
+    activeAbort = null;
+    activeUploadId = "";
     btn.disabled = false;
+    validateReady();
+    $("prog").classList.add("hidden");
+  }
+
+  function progress(pct: number, phase: "encrypt" | "upload" | "finish"): void {
+    fill.style.width = pct + "%";
+    label.textContent =
+      phase === "encrypt" ? "encrypting…" : phase === "finish" ? "finishing…" : "uploading " + pct + "%";
   }
 });
+
+$("progcancel").addEventListener("click", () => {
+  activeAbort?.abort();
+});
+
+if (location.search.includes("selfcheck")) {
+  document.body.textContent = "";
+  const preEl = document.createElement("pre");
+  preEl.id = "selfout";
+  document.body.appendChild(preEl);
+  void selfcheck();
+} else if (location.pathname.startsWith("/p/")) {
+  initTheme();
+  readView();
+} else {
+  void gateFlow();
+}
+
 
 // gate screen: shown before the app when this instance has a create gate;
 // unlocking is verified against POST /api/gate, then kept per tab (sessionStorage).

@@ -20,6 +20,26 @@ export function bytesFromB64u(str: string): Uint8Array<ArrayBuffer> {
 
 export type AesKey = CryptoKey;
 
+export interface Sealed {
+  iv: Uint8Array<ArrayBuffer>;
+  ct: Uint8Array<ArrayBuffer>;
+}
+
+export async function sealBytes(key: AesKey, plain: Uint8Array<ArrayBuffer>): Promise<Sealed> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plain);
+  return { iv, ct: new Uint8Array(ct) };
+}
+
+export async function openBytes(
+  key: AesKey,
+  iv: Uint8Array<ArrayBuffer>,
+  ct: Uint8Array<ArrayBuffer>,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
+  return new Uint8Array(pt);
+}
+
 export async function randomKey(): Promise<{ key: AesKey; keyB64: string }> {
   const raw = crypto.getRandomValues(new Uint8Array(32));
   return {
@@ -44,18 +64,13 @@ export function deriveKey(passphrase: string, salt: Uint8Array<ArrayBuffer>): Pr
 }
 
 export async function seal(key: AesKey, text: string): Promise<string> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(text));
-  return b64uFromBytes(new Uint8Array([...iv, ...new Uint8Array(ct)]));
+  const { iv, ct } = await sealBytes(key, enc.encode(text));
+  return b64uFromBytes(new Uint8Array([...iv, ...ct]));
 }
 
 export async function open_(payloadB64: string, key: AesKey): Promise<string> {
   const buf = bytesFromB64u(payloadB64);
-  const pt = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: buf.subarray(0, 12) },
-    key,
-    buf.subarray(12),
-  );
+  const pt = await openBytes(key, buf.subarray(0, 12), buf.subarray(12));
   return dec.decode(pt);
 }
 
