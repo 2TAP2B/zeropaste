@@ -104,10 +104,9 @@
     .copybtn svg { width: 17px; height: 17px; }
   }
   .qrwrap {
-    margin-top: 1rem; text-align: center;
+    margin-top: 1.25rem; text-align: center;
   }
-  .qrwrap summary { cursor: pointer; display: inline-block; }
-  #qr { margin-top: .75rem; }
+  #qr { margin-top: .5rem; }
   #qr svg, #qr img {
     background: #fff; padding: .4rem; border-radius: 6px; max-width: 192px; height: auto;
   }

@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#0b0e14">
 <title>zeropaste</title>
 <link rel="stylesheet" href="/assets/atom-one-dark.min.css">
-<link rel="stylesheet" href="/assets/style.css?v=0.1.3">
+<link rel="stylesheet" href="/assets/style.css?v=0.1.4">
 </head>
 <body>
 <main>
@@ -52,14 +52,13 @@
     <div class="hint">Share this link. The decryption key never leaves the browser.</div>
     <div id="passnote" class="hint danger hidden">This link is passphrase-protected — send the passphrase separately, not with the link.</div>
     <div class="link-box">
-      <input id="share" readonly>
+      <input id="share" readonly title="Click the link to copy">
       <button id="copylink">Copy</button>
       <button id="again">New paste</button>
     </div>
-    <details class="qrwrap">
-      <summary class="hint">Show QR code</summary>
+    <div class="qrwrap">
       <div id="qr"></div>
-    </details>
+    </div>
   </section>
 
   <!-- read -->
@@ -103,6 +102,6 @@
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js"></script>
+<script src="/assets/app.js?v=0.1.4"></script>
 </body>
 </html>
