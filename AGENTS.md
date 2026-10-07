@@ -34,7 +34,7 @@ Out of scope by design (an agent must not add these): authentication *beyond the
 | `web/assets/app.js` | All client logic incl. crypto helpers (`b64uFromBytes`, `bytesFromB64u`, `randomKey`, `deriveKey`, `seal`, `open_`). |
 | `web/assets/highlight.min.js` | highlight.js v11.11.1 "common" build (~127 KB), fetched once from `https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js` and committed. Never hotlink. |
 | `web/assets/qrcode.min.js` | qrcode-generator v1.4.4 (~21 KB) from `https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js`, committed. QR is rendered client-side only. |
-| `web/assets/atom-one-dark.min.css` | highlight.js theme from the same release, committed. |
+| `web/assets/atom-one-dark.min.css` | highlight.js dark theme from the same release, committed. Paired with `atom-one-light.min.css`: both are linked with static `prefers-color-scheme` media (no-JS safe) and `applyTheme` pins the active one to `media="all"` (theme = `#hljs-dark` / `#hljs-light`). |
 | `main_test.go` | httptest-based suite (see §8). |
 | `go.mod` | `module paste`, `go 1.25`, empty require block. |
 | `flake.nix`, `.envrc`, `flake.lock` | Nix: dev shell (Go via nixpkgs unstable, git, ripgrep, node), package (see `package.nix`), NixOS module (see `module.nix`); `.envrc` contains exactly `use flake`. |
