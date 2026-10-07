@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -287,5 +288,333 @@ func TestIndexServed(t *testing.T) {
 	}
 	if rec := get(h, "/nope"); rec.Code != 404 {
 		t.Fatalf("unknown path: got %d, want 404", rec.Code)
+	}
+}
+
+// --- file uploads ---
+
+func put(t *testing.T, h http.Handler, path string, body []byte, auth string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("PUT", path, bytes.NewReader(body))
+	if auth != "" {
+		req.Header.Set("Authorization", "Bearer "+auth)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func postTo(t *testing.T, h http.Handler, path, body, auth string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	if auth != "" {
+		req.Header.Set("Authorization", "Bearer "+auth)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// small chunk caps make chunk tests tiny and exact
+func tinyChunks(t *testing.T) {
+	t.Helper()
+	oldBlob, oldChunk, oldWin := maxBlobBytes, chunkBytes, burnWindowSec
+	maxBlobBytes, chunkBytes, burnWindowSec = 64, 8, 2
+	t.Cleanup(func() { maxBlobBytes, chunkBytes, burnWindowSec = oldBlob, oldChunk, oldWin })
+}
+
+func initUpload(t *testing.T, h http.Handler, body string) (struct {
+	ID       string `json:"id"`
+	Chunks   int64  `json:"chunks"`
+	ChunkSze int64  `json:"chunkSize"`
+}, *httptest.ResponseRecorder) {
+	t.Helper()
+	var out struct {
+		ID       string `json:"id"`
+		Chunks   int64  `json:"chunks"`
+		ChunkSze int64  `json:"chunkSize"`
+	}
+	rec := postTo(t, h, "/api/uploads", body, "")
+	if rec.Code == 200 {
+		if json.Unmarshal(rec.Body.Bytes(), &out) != nil || out.ID == "" {
+			t.Fatalf("init: no id: %s", rec.Body)
+		}
+	}
+	return out, rec
+}
+
+func TestUploadRoundTrip(t *testing.T) {
+	tinyChunks(t)
+	h := build(t.TempDir(), "")
+	// len 21 with chunks of 8: three chunks 8/8/5
+	payload := make([]byte, 21)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+	ids, rec := initUpload(t, h, `{"len":21,"ttl":"1h","burn":false}`)
+	if rec.Code != 200 || ids.Chunks != 3 || ids.ChunkSze != 8 {
+		t.Fatalf("init: got %d %s %+v", rec.Code, rec.Body, ids)
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/0", payload[0:8], ""); rec.Code != 204 {
+		t.Fatalf("chunk0: got %d %s", rec.Code, rec.Body)
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/1", payload[8:16], ""); rec.Code != 204 {
+		t.Fatalf("chunk1: got %d", rec.Code)
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/2", payload[16:], ""); rec.Code != 204 {
+		t.Fatalf("chunk2: got %d", rec.Code)
+	}
+	if rec := postTo(t, h, "/api/uploads/"+ids.ID+"/finish", "", ""); rec.Code != 200 {
+		t.Fatalf("finish: got %d %s", rec.Code, rec.Body)
+	}
+	rec = get(h, "/api/paste/"+ids.ID)
+	var meta struct {
+		Len    int64  `json:"len"`
+		Data   string `json:"data"`
+		Burn   bool   `json:"burn"`
+		Expiry int64  `json:"expires"`
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &meta) != nil {
+		t.Fatalf("meta parse: %s", rec.Body)
+	}
+	if meta.Len != 21 || meta.Data != "" || meta.Burn || meta.Expiry == 0 {
+		t.Fatalf("meta wrong: %+v", meta)
+	}
+	// reader paginates: range GETs at most chunkBytes each
+	full := make([]byte, 0, 21)
+	for off := int64(0); off < 21; off += 8 {
+		rec = get(h, fmt.Sprintf("/api/paste/%s/blob?offset=%d", ids.ID, off))
+		if rec.Code != 200 {
+			t.Fatalf("blob range %d: got %d", off, rec.Code)
+		}
+		full = append(full, rec.Body.Bytes()...)
+	}
+	if !bytes.Equal(full, payload) {
+		t.Fatalf("blob full: got %v want %v", full, payload)
+	}
+}
+
+func TestUploadResumeOverwrite(t *testing.T) {
+	tinyChunks(t)
+	h := build(t.TempDir(), "")
+	ids, rec := initUpload(t, h, `{"len":21,"ttl":"1h"}`)
+	if rec.Code != 200 {
+		t.Fatalf("init: %d", rec.Code)
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/0", []byte("11111111"), ""); rec.Code != 204 {
+		t.Fatalf("first write: %d", rec.Code)
+	}
+	// resume: same index overwritten with the real chunk
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/0", []byte("22222222"), ""); rec.Code != 204 {
+		t.Fatalf("resume write: %d", rec.Code)
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/1", []byte("33333333"), ""); rec.Code != 204 {
+		t.Fatalf("chunk1: %d", rec.Code)
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/2", []byte("44444"), ""); rec.Code != 204 {
+		t.Fatalf("chunk2: %d", rec.Code)
+	}
+	if rec := postTo(t, h, "/api/uploads/"+ids.ID+"/finish", "", ""); rec.Code != 200 {
+		t.Fatalf("finish: %d %s", rec.Code, rec.Body)
+	}
+	// paginate like the reader does
+	full := make([]byte, 0, 21)
+	for off := int64(0); off < 21; off += 8 {
+		if rec := get(h, fmt.Sprintf("/api/paste/%s/blob?offset=%d", ids.ID, off)); rec.Code != 200 {
+			t.Fatalf("blob range %d: got %d", off, rec.Code)
+		} else {
+			full = append(full, rec.Body.Bytes()...)
+		}
+	}
+	if string(full) != "222222223333333344444" {
+		t.Fatalf("blob content: %q", string(full))
+	}
+}
+
+func TestUploadFinishMissingPart(t *testing.T) {
+	tinyChunks(t)
+	h := build(t.TempDir(), "")
+	ids, rec := initUpload(t, h, `{"len":21,"ttl":"1h"}`)
+	if rec.Code != 200 {
+		t.Fatalf("init: %d", rec.Code)
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/0", make([]byte, 8), ""); rec.Code != 204 {
+		t.Fatalf("chunk0: %d", rec.Code)
+	}
+	// parts 1 and 2 missing: finish fails but parts survive for retry
+	if rec := postTo(t, h, "/api/uploads/"+ids.ID+"/finish", "", ""); rec.Code != 400 {
+		t.Fatalf("partial finish: got %d, want 400", rec.Code)
+	}
+	// a stray oversized chunk must be rejected
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/1", make([]byte, 9), ""); rec.Code != 400 {
+		t.Fatalf("oversize chunk: got %d, want 400", rec.Code)
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/1", make([]byte, 8), ""); rec.Code != 204 {
+		t.Fatalf("chunk1: %d", rec.Code)
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/2", make([]byte, 5), ""); rec.Code != 204 {
+		t.Fatalf("chunk2: %d", rec.Code)
+	}
+	if rec := postTo(t, h, "/api/uploads/"+ids.ID+"/finish", "", ""); rec.Code != 200 {
+		t.Fatalf("retry finish: %d %s", rec.Code, rec.Body)
+	}
+	if rec := get(h, "/api/paste/"+ids.ID); rec.Code != 200 {
+		t.Fatalf("meta after retry finish: %d", rec.Code)
+	}
+	// double finish is idempotent
+	if rec := postTo(t, h, "/api/uploads/"+ids.ID+"/finish", "", ""); rec.Code != 200 {
+		t.Fatalf("double finish: %d", rec.Code)
+	}
+}
+
+func TestUploadAbortCleans(t *testing.T) {
+	tinyChunks(t)
+	h := build(t.TempDir(), "")
+	ids, rec := initUpload(t, h, `{"len":21,"ttl":"1h"}`)
+	if rec.Code != 200 {
+		t.Fatalf("init: %d", rec.Code)
+	}
+	put(t, h, "/api/uploads/"+ids.ID+"/0", make([]byte, 8), "")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/uploads/"+ids.ID, nil))
+	if rec.Code != 200 {
+		t.Fatalf("abort: %d", rec.Code)
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/0", make([]byte, 8), ""); rec.Code != 404 {
+		t.Fatalf("chunk after abort: got %d, want 404", rec.Code)
+	}
+	if rec := postTo(t, h, "/api/uploads/"+ids.ID+"/finish", "", ""); rec.Code != 404 {
+		t.Fatalf("finish after abort: got %d, want 404", rec.Code)
+	}
+	// second abort is a benign no-op
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/uploads/"+ids.ID, nil))
+	if rec.Code != 200 {
+		t.Fatalf("second abort: %d", rec.Code)
+	}
+}
+
+func TestUploadBadRequests(t *testing.T) {
+	tinyChunks(t)
+	h := build(t.TempDir(), "")
+	for _, body := range []string{
+		`{"len":0,"ttl":"1d"}`,                // empty
+		`{"len":-1,"ttl":"1d"}`,               // negative
+		`{"len":65,"ttl":"1d"}`,               // above cap
+		`{"len":21,"ttl":"2w"}`,               // bad ttl
+		`{"len":21}`,                          // empty ttl
+		`{"len":21,"ttl":"1d","salt":"AA=="}`, // short salt
+	} {
+		rec := postTo(t, h, "/api/uploads", body, "")
+		if rec.Code != 400 {
+			t.Fatalf("init %q: got %d, want 400", body, rec.Code)
+		}
+	}
+	// chunk path checks
+	ids, rec := initUpload(t, h, `{"len":21,"ttl":"1h"}`)
+	if rec.Code != 200 {
+		t.Fatalf("init: %d", rec.Code)
+	}
+	for _, p := range []string{
+		"/api/uploads/" + ids.ID + "/3",  // beyond chunk count
+		"/api/uploads/" + ids.ID + "/-1", // negative
+		"/api/uploads/" + ids.ID + "/xx", // junk
+		"/api/uploads/abcdefgh:!/0",      // bad id charset (traversal gate)
+	} {
+		if rec := put(t, h, p, make([]byte, 8), ""); rec.Code == 204 {
+			t.Fatalf("PUT %q: got 204, want 4xx", p)
+		}
+	}
+}
+
+func TestUploadSweep(t *testing.T) {
+	tinyChunks(t)
+	dir := t.TempDir()
+	h := build(dir, "")
+	ids, rec := initUpload(t, h, `{"len":21,"ttl":"1h"}`)
+	if rec.Code != 200 {
+		t.Fatalf("init: %d", rec.Code)
+	}
+	put(t, h, "/api/uploads/"+ids.ID+"/0", make([]byte, 8), "")
+	// newborn session survives a normal sweep
+	sweep(dir)
+	if _, err := os.Stat(filepath.Join(dir, "uploads", ids.ID)); err != nil {
+		t.Fatalf("fresh upload swept: %v", err)
+	}
+	// age the manifest past 2h: sweep removes the whole session
+	mf := filepath.Join(dir, "uploads", ids.ID, "upload.json")
+	if err := os.WriteFile(mf, []byte(`{"len":21,"ttl":"1h","created":`+fmt.Sprint(time.Now().Unix()-7200)+`}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sweep(dir)
+	if _, err := os.Stat(filepath.Join(dir, "uploads", ids.ID)); !os.IsNotExist(err) {
+		t.Fatalf("stale upload survived: %v", err)
+	}
+}
+
+func TestBlobBurnExpiresOnRead(t *testing.T) {
+	tinyChunks(t)
+	dir := t.TempDir()
+	h := build(dir, "")
+	ids, rec := initUpload(t, h, `{"len":21,"ttl":"1d","burn":true}`)
+	if rec.Code != 200 {
+		t.Fatalf("init: %d", rec.Code)
+	}
+	put(t, h, "/api/uploads/"+ids.ID+"/0", make([]byte, 8), "")
+	put(t, h, "/api/uploads/"+ids.ID+"/1", make([]byte, 8), "")
+	put(t, h, "/api/uploads/"+ids.ID+"/2", make([]byte, 5), "")
+	postTo(t, h, "/api/uploads/"+ids.ID+"/finish", "", "")
+	// first meta read must flip burn into the grace window, not nuke the blob mid-download
+	if rec := get(h, "/api/paste/"+ids.ID); rec.Code != 200 {
+		t.Fatalf("burn meta read: %d", rec.Code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ids.ID+".blob")); err != nil {
+		t.Fatalf("blob vanished at meta read: %v", err)
+	}
+	if rec := get(h, "/api/paste/"+ids.ID+"/blob?offset=0"); rec.Code != 200 {
+		t.Fatalf("blob in window: %d", rec.Code)
+	}
+	// expired meta + sweep reaps blob and meta
+	reap := filepath.Join(dir, ids.ID+".json")
+	if err := os.WriteFile(reap, []byte(`{"len":21,"burn":true,"expires":`+fmt.Sprint(time.Now().Unix()-1)+`}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sweep(dir)
+	if rec := get(h, "/api/paste/"+ids.ID+"/blob?offset=0"); rec.Code != 404 {
+		t.Fatalf("blob after sweep: got %d, want 404", rec.Code)
+	}
+	// meta is gone too
+	if rec := get(h, "/api/paste/"+ids.ID); rec.Code != 404 {
+		t.Fatalf("meta after sweep: got %d, want 404", rec.Code)
+	}
+}
+
+func TestAuthGateUpload(t *testing.T) {
+	tinyChunks(t)
+	h := build(t.TempDir(), "secret")
+	rec := postTo(t, h, "/api/uploads", `{"len":21,"ttl":"1h"}`, "")
+	if rec.Code != 401 {
+		t.Fatalf("no key: got %d, want 401", rec.Code)
+	}
+	rec = postTo(t, h, "/api/uploads", `{"len":21,"ttl":"1h"}`, "wrong")
+	if rec.Code != 401 {
+		t.Fatalf("wrong key: got %d, want 401", rec.Code)
+	}
+	rec = postTo(t, h, "/api/uploads", `{"len":21,"ttl":"1h"}`, "secret")
+	if rec.Code != 200 {
+		t.Fatalf("good key: got %d %s, want 200", rec.Code, rec.Body)
+	}
+	var gated struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &gated) != nil || gated.ID == "" {
+		t.Fatalf("no id with key: %s", rec.Body)
+	}
+	// chunks behind the gate too: no header -> 401, correct one -> 204
+	if rec := put(t, h, "/api/uploads/"+gated.ID+"/0", make([]byte, 8), ""); rec.Code != 401 {
+		t.Fatalf("ungated chunk: got %d, want 401", rec.Code)
+	}
+	if rec := put(t, h, "/api/uploads/"+gated.ID+"/0", make([]byte, 8), "secret"); rec.Code != 204 {
+		t.Fatalf("gated chunk: got %d %s, want 204", rec.Code, rec.Body)
 	}
 }
