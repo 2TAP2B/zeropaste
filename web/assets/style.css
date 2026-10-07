@@ -27,7 +27,7 @@
     color: var(--text); font: inherit; font-size: .95rem;
     white-space: pre-wrap; word-break: break-word;
   }
-  .paste-view { min-height: 0; padding: 2.75rem .5rem .25rem 0; overflow-wrap: anywhere; }
+  .paste-view { min-height: 0; padding: 3rem .5rem .25rem 0; overflow-wrap: anywhere; }
   .paste-view code { font: inherit; }
   .paste-view pre { margin: 0; }
   .codewrap { position: relative; }
@@ -98,7 +98,7 @@
     button { justify-content: center; }
     textarea { min-height: 180px; font-size: 1rem; }
     .link-box input { flex-basis: auto; }
-    .paste-view { font-size: 1rem; }
+    .paste-view { padding-top: 3.75rem; font-size: 1rem; }
     .copybtn { padding: .65rem; }
     .copybtn svg { width: 17px; height: 17px; }
   }
