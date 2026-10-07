@@ -5,6 +5,7 @@ import { initTheme } from "./theme";
 import { readView } from "./read";
 import { uploadBundle, abortUpload, UploadAborted } from "./uploads";
 import { selfcheck } from "./selfcheck";
+import { bootAccount, stashForCreate } from "./account";
 
 const burnOn = (): boolean => $("burn").getAttribute("aria-pressed") === "true";
 $("burn").addEventListener("click", () =>
@@ -129,6 +130,11 @@ $("create").addEventListener("click", async () => {
   $("prog").classList.remove("hidden");
   const fill = document.getElementById("progfill") as HTMLElement;
   const label = document.getElementById("proglabel") as HTMLElement;
+  const progress = (pct: number, phase: "encrypt" | "upload" | "finish"): void => {
+    fill.style.width = pct + "%";
+    label.textContent =
+      phase === "encrypt" ? "encrypting…" : phase === "finish" ? "finishing…" : "uploading " + pct + "%";
+  };
   activeAbort = new AbortController();
   progress(0, "encrypt");
   try {
@@ -147,6 +153,7 @@ $("create").addEventListener("click", async () => {
           });
     const link = location.origin + "/p/" + out.id + (out.keyB64 ? "#" + out.keyB64 : "");
     ($("share") as HTMLInputElement).value = link;
+    stashForCreate(out.id, out.keyB64); // dashboard rows re-open via locally stashed fragments
     ($("passnote") as HTMLElement).classList.toggle("hidden", !out.pass);
     drawQR(link);
     $("composeerr").classList.add("hidden");
@@ -171,31 +178,11 @@ $("create").addEventListener("click", async () => {
     validateReady();
     $("prog").classList.add("hidden");
   }
-
-  function progress(pct: number, phase: "encrypt" | "upload" | "finish"): void {
-    fill.style.width = pct + "%";
-    label.textContent =
-      phase === "encrypt" ? "encrypting…" : phase === "finish" ? "finishing…" : "uploading " + pct + "%";
-  }
 });
 
 $("progcancel").addEventListener("click", () => {
   activeAbort?.abort();
 });
-
-if (location.search.includes("selfcheck")) {
-  document.body.textContent = "";
-  const preEl = document.createElement("pre");
-  preEl.id = "selfout";
-  document.body.appendChild(preEl);
-  void selfcheck();
-} else if (location.pathname.startsWith("/p/")) {
-  initTheme();
-  readView();
-} else {
-  void gateFlow();
-}
-
 
 // gate screen: shown before the app when this instance has a create gate;
 // unlocking is verified against POST /api/gate, then kept per tab (sessionStorage).
@@ -242,6 +229,8 @@ async function gateFlow(): Promise<void> {
   }
 }
 
+// the link itself is the affordance: tap it to copy
+$("share").addEventListener("click", () => void copy(($("share") as HTMLInputElement).value, $("copylink")));
 $("copylink").addEventListener("click", () => void copy(($("share") as HTMLInputElement).value, $("copylink")));
 $("again").addEventListener("click", () => {
   ($("text") as HTMLTextAreaElement).value = "";
@@ -261,9 +250,16 @@ document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((btn) => {
   if (src) btn.addEventListener("click", () => void copy(src.textContent ?? "", btn));
 });
 
-if (location.pathname.startsWith("/p/")) {
+if (location.search.includes("selfcheck")) {
+  document.body.textContent = "";
+  const preEl = document.createElement("pre");
+  preEl.id = "selfout";
+  document.body.appendChild(preEl);
+  void selfcheck();
+} else if (location.pathname.startsWith("/p/")) {
   initTheme();
   readView();
 } else {
   void gateFlow();
+  void bootAccount();
 }

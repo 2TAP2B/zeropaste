@@ -87,6 +87,7 @@ export async function uploadBundle(o: UploadOpts): Promise<UploadResult> {
         throwIfAborted(o.signal);
         const res = await fetch(`/api/uploads/${init.id}/${n}`, {
           method: "PUT",
+          headers: jsonHeaders(), // chunked PUTs are gated too when the instance locks creation
           body: chunk,
           signal: o.signal,
         });

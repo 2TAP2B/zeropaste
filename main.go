@@ -3,8 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/base64"
@@ -24,6 +27,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 const maxData = 64 << 10 // ciphertext cap; text/passwords/snippets only
@@ -140,21 +146,32 @@ func main() {
 func build(dir, createKey string) http.Handler {
 	hf := func(fn func(http.ResponseWriter, *http.Request)) http.Handler { return http.HandlerFunc(fn) }
 	rl := newLimiter(30) // pastes per IP per minute
+	sess := newSessions(dir)
+	owns := newShareIndex(dir, sess)
+	cer := newCeremony()
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", secure(hf(healthz)))
 	mux.Handle("GET /api/gate", secure(hf(gateStatus(createKey))))
 	mux.Handle("POST /api/gate", secure(rl.guard(hf(gateVerify(createKey)))))
 	mux.Handle("GET /", secure(hf(serveIndex)))
 	mux.Handle("GET /p/", secure(hf(serveIndex))) // SPA route, id parsed client-side
-	mux.Handle("POST /api/paste", secure(rl.guard(authGate(createKey, hf(create(dir))))))
+	mux.Handle("POST /api/paste", secure(rl.guard(authGate(createKey, hf(create(dir, owns))))))
 	mux.Handle("GET /api/paste/{id}", secure(hf(readAPI(dir))))
 	mux.Handle("GET /api/paste/{id}/blob", secure(hf(readBlob(dir))))
 	mux.Handle("DELETE /api/paste/{id}", secure(hf(deleteAPI(dir))))
 	mux.Handle("POST /api/uploads", secure(rl.guard(authGate(createKey, hf(uploadInit(dir))))))
 	mux.Handle("PUT /api/uploads/{id}/{n}", secure(authGate(createKey, hf(uploadChunk(dir)))))
 	mux.Handle("DELETE /api/uploads/{id}", secure(hf(uploadAbort(dir))))
-	mux.Handle("POST /api/uploads/{id}/finish", secure(rl.guard(authGate(createKey, hf(uploadFinish(dir))))))
+	mux.Handle("POST /api/uploads/{id}/finish", secure(rl.guard(authGate(createKey, hf(uploadFinish(dir, owns))))))
 	mux.Handle("GET /assets/", secure(assets()))
+	// phase-2 identity (passkeys) + active-share dashboard
+	mux.Handle("GET /api/me", secure(hf(me(sess))))
+	mux.Handle("POST /api/identity/register/begin", secure(rl.guard(hf(sess.registerBegin(cer)))))
+	mux.Handle("POST /api/identity/register/finish", secure(rl.guard(hf(sess.registerFinish(cer, owns)))))
+	mux.Handle("POST /api/identity/login/begin", secure(rl.guard(hf(sess.loginBegin(cer)))))
+	mux.Handle("POST /api/identity/login/finish", secure(rl.guard(hf(sess.loginFinish(cer)))))
+	mux.Handle("POST /api/identity/logout", secure(hf(sess.logout())))
+	mux.Handle("GET /api/shares", secure(hf(owns.list())))
 	return mux
 }
 
@@ -293,7 +310,7 @@ func assets() http.Handler {
 	}))
 }
 
-func create(dir string) http.HandlerFunc {
+func create(dir string, owns *shareIndex) http.HandlerFunc {
 	type req struct {
 		Data string `json:"data"`
 		Salt string `json:"salt"`
@@ -339,6 +356,9 @@ func create(dir string) http.HandlerFunc {
 			log.Print(err)
 			httpError(w, 500, "could not store paste")
 			return
+		}
+		if owns != nil {
+			owns.record(r, id) // dashboard row for signed-in creators
 		}
 		respond(w, 200, map[string]string{"id": id})
 	}
@@ -605,7 +625,7 @@ func uploadAbort(dir string) http.HandlerFunc {
 }
 
 // uploadFinish verifies the chunk set, joins it, promotes to a paste.
-func uploadFinish(dir string) http.HandlerFunc {
+func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if !validID(id) {
@@ -682,6 +702,9 @@ func uploadFinish(dir string) http.HandlerFunc {
 			return
 		}
 		os.RemoveAll(rd)
+		if owns != nil {
+			owns.record(r, id) // dashboard row for signed-in creators
+		}
 		respond(w, 200, map[string]string{"id": id})
 	}
 }
@@ -770,4 +793,560 @@ func respond(w http.ResponseWriter, code int, v any) {
 
 func httpError(w http.ResponseWriter, code int, msg string) {
 	respond(w, code, map[string]string{"error": msg})
+}
+
+// ---- phase 2: passkey identity (go-webauthn), signed-cookie sessions, ----
+// ---- and the active-shares dashboard. Storage stays file-shaped:      ----
+// ---- identities/<id>.json, shares/<ident>/<paste>.json; the HMAC      ----
+// ---- session token lives on the client cookie, nothing on disk.       ----
+
+const sessionCookie = "zp.session"
+const sessionTTL = 30 * 24 * time.Hour
+
+type identity struct {
+	ID    string                `json:"id"` // b64url of 16 random bytes
+	Name  string                `json:"name,omitempty"`
+	Creds []webauthn.Credential `json:"creds"`
+}
+
+func (i *identity) WebAuthnID() []byte {
+	d, _ := base64.RawURLEncoding.DecodeString(i.ID)
+	return d
+}
+func (i *identity) WebAuthnName() string        { return i.Name }
+func (i *identity) WebAuthnDisplayName() string { return i.Name }
+func (i *identity) WebAuthnIcon() string        { return "" }
+func (i *identity) WebAuthnCredentials() []webauthn.Credential {
+	return i.Creds
+}
+
+// sessions: HMAC-signed stateless cookie; the only server secret is
+// <dir>/.session.key (auto-generated once, 0600).
+type sessions struct {
+	dir    string
+	secret []byte
+}
+
+func newSessions(dir string) *sessions {
+	keyPath := filepath.Join(dir, ".session.key")
+	secret, err := os.ReadFile(keyPath)
+	if err != nil || len(secret) != 32 {
+		if os.Getenv("SESSION_SECRET") != "" {
+			secret = []byte(os.Getenv("SESSION_SECRET"))
+		} else {
+			secret = make([]byte, 32)
+			if _, err := rand.Read(secret); err != nil {
+				log.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(keyPath, secret, 0o600); err != nil {
+			log.Fatal(err)
+		}
+	}
+	return &sessions{dir: dir, secret: secret}
+}
+
+type sessionClaims struct {
+	Sub string `json:"sub"`
+	Exp int64  `json:"exp"`
+}
+
+func (s *sessions) sign(c sessionClaims) string {
+	b, _ := json.Marshal(c)
+	payload := base64.RawURLEncoding.EncodeToString(b)
+	mac := hmacSHA256(s.secret, []byte(payload))
+	return payload + "." + base64.RawURLEncoding.EncodeToString(mac)
+}
+
+func (s *sessions) verify(tok string) (sessionClaims, bool) {
+	var zero sessionClaims
+	payload, sig, found := strings.Cut(tok, ".")
+	if !found {
+		return zero, false
+	}
+	want, err := base64.RawURLEncoding.DecodeString(sig)
+	if err != nil || !hmacEqual(hmacSHA256(s.secret, []byte(payload)), want) {
+		return zero, false
+	}
+	var c sessionClaims
+	raw, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil || json.Unmarshal(raw, &c) != nil {
+		return zero, false
+	}
+	return c, c.Exp > time.Now().Unix()
+}
+
+// identFrom returns the logged-in identity for a request, or nil.
+func (s *sessions) identFrom(r *http.Request) *identity {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return nil
+	}
+	claims, ok := s.verify(c.Value)
+	if !ok {
+		return nil
+	}
+	return loadIdentity(filepath.Join(s.dir, "identities"), claims.Sub)
+}
+
+func loadIdentity(idents string, id string) *identity {
+	if id == "" {
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(idents, id+".json"))
+	if err != nil {
+		return nil
+	}
+	var i identity
+	if json.Unmarshal(b, &i) != nil {
+		return nil
+	}
+	return &i
+}
+
+func (s *sessions) saveIdentity(i *identity) error {
+	idents := filepath.Join(s.dir, "identities")
+	if err := os.MkdirAll(idents, 0o700); err != nil {
+		return err
+	}
+	b, _ := json.Marshal(i)
+	return os.WriteFile(filepath.Join(idents, i.ID+".json"), b, 0o600)
+}
+
+// findIdentityByCred scans the (small) identity dir for a credential id.
+func findIdentityByCred(idents string, credID []byte) *identity {
+	entries, err := os.ReadDir(idents)
+	if err != nil {
+		return nil
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		i, err := os.ReadFile(filepath.Join(idents, e.Name()))
+		if err != nil {
+			continue
+		}
+		var ident identity
+		if json.Unmarshal(i, &ident) != nil {
+			continue
+		}
+		for _, c := range ident.Creds {
+			if bytes.Equal(c.ID, credID) {
+				return &ident
+			}
+		}
+	}
+	return nil
+}
+
+func (s *sessions) setCookie(w http.ResponseWriter, tok string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: tok, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: maxAge,
+	})
+}
+
+func (s *sessions) issue(w http.ResponseWriter, id string) {
+	tok := s.sign(sessionClaims{Sub: id, Exp: time.Now().Add(sessionTTL).Unix()})
+	s.setCookie(w, tok, int(sessionTTL/time.Second))
+}
+
+// -- handlers --
+
+func me(s *sessions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		i := s.identFrom(r)
+		if i == nil {
+			respond(w, 200, map[string]any{"name": ""})
+			return
+		}
+		respond(w, 200, map[string]any{"name": i.Name, "id": i.ID})
+	}
+}
+
+func (s *sessions) logout() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		s.setCookie(w, "", -1)
+		respond(w, 200, map[string]bool{"ok": true})
+	}
+}
+
+func hmacSHA256(secret, data []byte) []byte {
+	m := hmac.New(sha256.New, secret)
+	m.Write(data)
+	return m.Sum(nil)
+}
+
+func hmacEqual(a, b []byte) bool {
+	return hmac.Equal(a, b)
+}
+
+// ceremony: holds in-flight webauthn register/login states in memory
+// (single-instance design mandate; server restart drops pending ceremonies).
+type ceremony struct {
+	mu  sync.Mutex
+	reg map[string]webauthn.SessionData
+	log map[string]webauthn.SessionData
+	// pending identity ids keyed by ceremony session id (registration path)
+	tokens map[string]string
+}
+
+func newCeremony() *ceremony {
+	return &ceremony{
+		reg:    map[string]webauthn.SessionData{},
+		log:    map[string]webauthn.SessionData{},
+		tokens: map[string]string{},
+	}
+}
+
+func (c *ceremony) token(id string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.tokens[id]
+	delete(c.tokens, id)
+	return v, ok
+}
+
+func (c *ceremony) setToken(id, uid string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tokens[id] = uid
+}
+
+func (c *ceremony) putReg(id string, s webauthn.SessionData) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reg[id] = s
+}
+func (c *ceremony) getReg(id string) (webauthn.SessionData, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s, ok := c.reg[id]
+	if ok {
+		delete(c.reg, id)
+	}
+	return s, ok
+}
+func (c *ceremony) putLog(id string, s webauthn.SessionData) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.log[id] = s
+}
+func (c *ceremony) getLog(id string) (webauthn.SessionData, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s, ok := c.log[id]
+	if ok {
+		delete(c.log, id)
+	}
+	return s, ok
+}
+
+// rpFromRequest derives the webauthn config from the request: RPID = host
+// (no port), origin = scheme + host. Works for any hostname in front.
+func rpFromRequest(r *http.Request) *webauthn.WebAuthn {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	proto := "http"
+	if r.Header.Get("X-Forwarded-Proto") != "" {
+		proto = r.Header.Get("X-Forwarded-Proto")
+	}
+	w, err := webauthn.New(&webauthn.Config{RPID: host, RPDisplayName: "zeropaste", RPOrigins: []string{proto + "://" + r.Host}})
+	if err != nil {
+		return nil
+	}
+	return w
+}
+
+func continueJSON(w http.ResponseWriter, r *http.Request) (string, bool) {
+	type body struct {
+		SessionID string `json:"sessionId"`
+	}
+	var b body
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		httpError(w, 400, "invalid request body")
+		return "", false
+	}
+	return b.SessionID, true
+}
+
+func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
+	type req struct {
+		Name string `json:"name"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+		var q req
+		_ = json.NewDecoder(r.Body).Decode(&q) // name optional; anonymous register allowed
+		wa := rpFromRequest(r)
+		if wa == nil {
+			httpError(w, 500, "ceremony failed")
+			return
+		}
+		existing := s.identFrom(r)
+		var user identity
+		id := newSessionID()
+		if existing != nil {
+			user = *existing // attach another passkey to this identity
+		} else {
+			user = identity{ID: newSessionID(), Name: q.Name}
+		}
+		creation, sd, err := wa.BeginRegistration(&user)
+		if err != nil {
+			log.Print(err)
+			httpError(w, 500, "ceremony failed")
+			return
+		}
+		c.putReg(id, *sd)
+		c.setToken(id, user.ID) // remembers which identity the ceremony references
+		respond(w, 200, map[string]any{"options": creation, "sessionId": id, "name": user.Name})
+	}
+}
+
+func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sid, ok := continueJSON(w, r)
+		if !ok {
+			return
+		}
+		sd, found := c.getReg(sid)
+		if !found {
+			httpError(w, 400, "unknown session")
+			return
+		}
+		wa := rpFromRequest(r)
+		if wa == nil {
+			httpError(w, 500, "ceremony failed")
+			return
+		}
+		uid, ok := c.token(sid)
+		if !ok {
+			httpError(w, 400, "unknown session")
+			return
+		}
+		user := loadIdentity(filepath.Join(s.dir, "identities"), uid)
+		if user == nil {
+			httpError(w, 500, "identity missing")
+			return
+		}
+		cred, err := wa.FinishRegistration(user, sd, r)
+		if err != nil {
+			log.Print(err)
+			httpError(w, 400, "registration failed")
+			return
+		}
+		user.Creds = append(user.Creds, *cred)
+		if err := s.saveIdentity(user); err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not store identity")
+			return
+		}
+		if owns != nil {
+			owns.attach(user.ID)
+		}
+		s.issue(w, user.ID)
+		respond(w, 200, map[string]any{"name": user.Name})
+	}
+}
+
+func (s *sessions) loginBegin(c *ceremony) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// discoverable credentials: no user hint; identity resolved from the
+		// returned credential. Allowlist = every stored credential id.
+		wa := rpFromRequest(r)
+		if wa == nil {
+			httpError(w, 500, "ceremony failed")
+			return
+		}
+		allow := [][]byte{}
+		for _, i := range listIdentities(filepath.Join(s.dir, "identities")) {
+			for _, c := range i.Creds {
+				allow = append(allow, c.ID)
+			}
+		}
+		sd := webauthn.SessionData{
+			Challenge:            newSessionID(),
+			RelyingPartyID:       wa.Config.RPID,
+			AllowedCredentialIDs: allow,
+			Expires:              time.Now().Add(2 * time.Minute),
+			UserVerification:     "preferred",
+		}
+		responseBody := map[string]any{
+			"publicKey": map[string]any{
+				"challenge":        base64.RawURLEncoding.EncodeToString([]byte(sd.Challenge)),
+				"rpId":             wa.Config.RPID,
+				"timeout":          60000,
+				"userVerification": "preferred",
+			},
+		}
+		token := newSessionID()
+		c.putLog(token, sd)
+		respond(w, 200, map[string]any{"options": responseBody, "sessionId": token})
+	}
+}
+
+func (s *sessions) loginFinish(c *ceremony) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sid, ok := continueJSON(w, r)
+		if !ok {
+			return
+		}
+		sd, found := c.getLog(sid)
+		if !found {
+			httpError(w, 400, "unknown session")
+			return
+		}
+		wa := rpFromRequest(r)
+		if wa == nil {
+			httpError(w, 500, "ceremony failed")
+			return
+		}
+		parsed, err := protocol.ParseCredentialRequestResponseBody(r.Body)
+		if err != nil {
+			httpError(w, 400, "invalid login response")
+			return
+		}
+		credID := credIDBytes(parsed.Response.UserHandle)
+		if len(credID) == 0 {
+			credID = credIDBytes(parsed.ID)
+		}
+		ident := findIdentityByCred(filepath.Join(s.dir, "identities"), credID)
+		if ident == nil {
+			httpError(w, 401, "unknown passkey")
+			return
+		}
+		updated, err := wa.ValidateLogin(ident, sd, parsed)
+		if err != nil {
+			log.Print(err)
+			httpError(w, 401, "login failed")
+			return
+		}
+		// update the stored credential (sign counters, transports)
+		for idx := range ident.Creds {
+			if bytes.Equal(ident.Creds[idx].ID, updated.ID) {
+				ident.Creds[idx] = *updated
+			}
+		}
+		if err := s.saveIdentity(ident); err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not store identity")
+			return
+		}
+		s.issue(w, ident.ID)
+		respond(w, 200, map[string]any{"name": ident.Name})
+	}
+}
+
+func newSessionID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func credIDBytes(v any) []byte {
+	switch t := v.(type) {
+	case []byte:
+		return t
+	case string:
+		d, _ := base64.RawURLEncoding.DecodeString(t)
+		return d
+	}
+	return nil
+}
+
+// listIdentities returns all stored identities (small friend-group store).
+func listIdentities(idents string) []*identity {
+	entries, err := os.ReadDir(idents)
+	if err != nil {
+		return nil
+	}
+	var out []*identity
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(idents, e.Name()))
+		if err != nil {
+			continue
+		}
+		var i identity
+		if json.Unmarshal(b, &i) == nil {
+			out = append(out, &i)
+		}
+	}
+	return out
+}
+
+// shareIndex: per-identity directory of share ownership rows; listing is
+// computed live from the actual paste metas (expired pastes self-prune).
+type shareIndex struct {
+	dir  string
+	sess *sessions
+}
+
+func newShareIndex(dir string, sess *sessions) *shareIndex {
+	return &shareIndex{dir: dir, sess: sess}
+}
+
+func (si *shareIndex) idents(suite string) string {
+	return filepath.Join(si.dir, "shares", suite)
+}
+
+// attach after a fresh registration makes previously created anon impossible;
+// rows only accrue from creation while logged in.
+func (si *shareIndex) attach(identID string) {}
+
+// record writes an ownership row at create/finish time (no-op when anon).
+func (si *shareIndex) record(r *http.Request, pasteID string) {
+	i := si.sess.identFrom(r)
+	if i == nil {
+		return
+	}
+	dir := si.idents(i.ID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	b, _ := json.Marshal(map[string]any{"created": time.Now().Unix()})
+	_ = os.WriteFile(filepath.Join(dir, pasteID+".json"), b, 0o600)
+}
+
+func (si *shareIndex) list() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		i := si.sess.identFrom(r)
+		if i == nil {
+			respond(w, 200, []any{})
+			return
+		}
+		dir := si.idents(i.ID)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			respond(w, 200, []any{})
+			return
+		}
+		out := []any{}
+		for _, e := range entries {
+			name := strings.TrimSuffix(e.Name(), ".json")
+			b, err := os.ReadFile(filepath.Join(si.dir, name+".json"))
+			if err != nil {
+				os.Remove(filepath.Join(dir, e.Name())) // expired pastes self-prune
+				continue
+			}
+			var p paste
+			if json.Unmarshal(b, &p) != nil || p.Expires < time.Now().Unix() {
+				os.Remove(filepath.Join(dir, e.Name())) // expired file or corrupt row
+				continue
+			}
+			kind := "text"
+			if p.Len > 0 {
+				kind = "bundle"
+			}
+			out = append(out, map[string]any{"id": name, "kind": kind, "burn": p.Burn, "expires": p.Expires})
+		}
+		respond(w, 200, out)
+	}
 }

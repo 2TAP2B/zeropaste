@@ -90,6 +90,14 @@ Config via env at startup: `MAX_BLOB` (default `2147483648` = 2 GiB, 1 MiB..64 G
 - **Gate UX is a full-screen pre-screen**, not a field in the compose card: with the gate enabled, the client renders a bare unlock card (`#gate`, passphrase input + Unlock button) *before* any app view. Verification runs against `GET /api/gate` (→ `{"enabled": bool}`, no key metadata) and `POST /api/gate` (Bearer candidate → 204 or 401, rate limited). On 204 the passphrase is kept in `sessionStorage` key `zp.siteKey` (per tab, never localStorage, never a cookie) and future sends carry it as `Authorization: Bearer`. A 401 from a paste create drops the user back to the gate screen (stale key). Reader views (`/p/…`) never show the gate.
 - The create flow needs no UI changes when the gate is disabled: `GET /api/gate` says `enabled:false`, the compose card renders directly.
 
+### Identity (phase 2): passkeys via go-webauthn (first third-party dep)
+
+- Storage stays file-shaped: `data/identities/<id>.json` (`{id, name, creds[]}` — creds are the lib's `webauthn.Credential` JSON). Sessions are HMAC-signed cookies (`zp.session`: `b64url({sub,exp}).b64url(sig)`), HttpOnly SameSite=Lax, 30 day TTL. Secret: `data/.session.key` (auto-generated 32 B, 0600) or env `SESSION_SECRET`.
+- `GET /api/me` → `{name}` (empty string = anonymous). `POST /api/identity/{register,login}/begin|finish` (rate limited), `POST /api/identity/logout` clears the cookie.
+- RP config derives from the request per ceremony: `RPID = host (no port)`, origin = `X-Forwarded-Proto ?? http` + `:// + Host`. Session challenge state lives **in-memory** (`ceremony` map, 2 min) — a restart drops pending ceremonies; that is the ponytail ceiling for multi-instance deployments.
+- Login discoverable-credential style: allowlist = every stored credential id; identity resolved from the returned `userHandle`.
+- Dashboard ownership rows: `data/shares/<ident>/<paste>.json` written at `create`/`uploadFinish` when the session cookie is present; `GET /api/shares` computes rows live from the actual paste metas and prunes gone/expired rows — zero bookkeeping. Anonymous creation records nothing.
+
 ### `GET /healthz`
 
 Exact-match route, returns 200 `ok`. Not rate limited, no auth.
