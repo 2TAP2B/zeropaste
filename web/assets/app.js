@@ -108,10 +108,13 @@ $("create").addEventListener("click", async () => {
     $("share").value = link;
     $("passnote").classList.toggle("hidden", !out.pass);
     drawQR(link);
+    $("composeerr").classList.add("hidden");
     show("linkbox");
   } catch (e) {
     if (e && e.silent) return; // already routed to the gate screen
-    alert("Failed to create paste: " + (e && e.message ? e.message : "unknown error"));
+    const box = $("composeerr");
+    box.textContent = (e && e.message ? e.message : "Failed to create paste.");
+    box.classList.remove("hidden");
   } finally {
     $("create").disabled = false;
   }
@@ -169,6 +172,7 @@ $("share").addEventListener("click", () => copy($("share").value, $("copylink"))
 $("copylink").addEventListener("click", () => copy($("share").value, $("copylink")));
 $("again").addEventListener("click", () => {
   $("text").value = ""; $("burn").setAttribute("aria-pressed", "false"); $("pass").value = "";
+  $("composeerr").classList.add("hidden");
   show("compose"); $("text").focus();
 });
 $("text").addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") $("create").click(); });
