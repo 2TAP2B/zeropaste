@@ -31,7 +31,7 @@
     <div class="row burnrow">
       <div class="field">
         <label class="field-label" for="ttl">burn paste after</label>
-        <input type="text" id="ttl" value="1d" inputmode="numeric" aria-label="Burn time" placeholder='e.g. "10 min", "6h", "1d"'>
+        <input type="text" id="ttl" value="1d" aria-label="Burn time" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" placeholder='e.g. "10 min", "6h", "1d"'>
       </div>
       <button type="button" class="toggle" id="burn" aria-pressed="false">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path></svg>
@@ -44,6 +44,7 @@
     <div class="row">
       <button class="primary" id="create">Encrypt & share</button>
     </div>
+    <div id="composeerr" class="hint danger hidden"></div>
     <div class="hint">With a passphrase the link alone is useless; share it over a different channel. The passphrase never reaches the server.</div>
   </section>
 
@@ -94,6 +95,6 @@
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.1.4"></script>
+<script src="/assets/app.js?v=0.1.6"></script>
 </body>
 </html>
