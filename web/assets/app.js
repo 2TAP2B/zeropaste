@@ -8,6 +8,11 @@ function applyTheme(t) {
   try { localStorage.setItem("zp.theme", t); } catch { /* private mode: session-only */ }
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = t === "light" ? "#a78bfa" : "#1c1917";
+  // hljs ships two palettes; the right one gets media="all", the other drops out
+  for (const el of [{ id: "hljs-light", theme: "light" }, { id: "hljs-dark", theme: "dark" }]) {
+    const link = document.getElementById(el.id);
+    if (link) link.media = el.theme === t ? "all" : "not all";
+  }
 }
 const savedTheme = (() => {
   try { return localStorage.getItem("zp.theme"); } catch { return null; }

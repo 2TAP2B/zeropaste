@@ -13,14 +13,14 @@
     --danger: #dc2626; --ok: #166534;
   }
   :root[data-theme="dark"] {
-    --bg: #1c1917; --surface: #3f324a; --border: #4a3d5a;
+    --bg: #1c1917; --surface: #2b2433; --border: #4a3d5a;
     --text: #d1d5db; --muted: #a5a0ad;
     --accent: #c0aafd; --accent-h: #d8c9ff; --on-accent: #1c1917;
     --danger: #e5607a; --ok: #4ade80;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #1c1917; --surface: #3f324a; --border: #4a3d5a;
+      --bg: #1c1917; --surface: #2b2433; --border: #4a3d5a;
       --text: #d1d5db; --muted: #a5a0ad;
       --accent: #c0aafd; --accent-h: #d8c9ff; --on-accent: #1c1917;
       --danger: #e5607a; --ok: #4ade80;
