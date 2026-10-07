@@ -41,7 +41,7 @@ Out of scope by design (an agent must not add these): authentication *beyond the
 | `package.nix` | Single Go derivation: `buildGoModule`, `vendorHash = null` (stdlib only), `CGO_ENABLED=0`, ldflags `-s -w`; binary renamed `paste` → `zeropaste` (avoids colliding with coreutils `paste` in PATH). MIT license. |
 | `module.nix` | `services.zeropaste`: `enable`, `listenAddress` (default `127.0.0.1:8080`), `createKeyFile` (EnvironmentFile — secrets never in the option system/store). systemd: `DynamicUser`, `StateDirectory = zeropaste` (`/var/lib/zeropaste`), `Restart = on-failure`, sandbox hardening. |
 | `Dockerfile` | Three-stage build (see §6). |
-| `.github/workflows/docker.yml` | CI: on `v*` tags and `workflow_dispatch`, builds and pushes the image to `ghcr.io/2tap2b/zeropaste` (semver tag, `latest`, sha) via GITHUB_TOKEN, gha cache. amd64 only. |
+| `.github/workflows/docker.yml` | CI: on `v*` tags and `workflow_dispatch`, builds and pushes the image to `ghcr.io/2tap2b/zeropaste` (semver tag, `latest`, sha) via GITHUB_TOKEN, gha cache. amd64 only. **Release naming:** `vX.Y.Z - name` with a plain hyphen — no emdash anywhere user-visible (titles and bodies). |
 | `compose.yaml` | Single service, port 8080, named volume `paste-data` → `/data`. |
 | `.dockerignore` | Excludes `data/`, `paste`, `*.md`, `.envrc`, `flake.*`, `.git`. |
 
