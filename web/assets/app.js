@@ -270,6 +270,12 @@ async function readView() {
   }
 }
 
+// quick-start popover copy buttons (popover itself opens with zero JS)
+document.querySelectorAll("[data-copy]").forEach((btn) => {
+  const src = document.getElementById(btn.getAttribute("data-copy"));
+  if (src) btn.addEventListener("click", () => copy(src.textContent, btn));
+});
+
 $("copytext").addEventListener("click", () => copy($("pasteview").textContent, $("copytext")));
 
 if (location.pathname.startsWith("/p/")) {
