@@ -218,6 +218,7 @@ function attestationBody(c: PublicKeyCredential, sessionId: string): string {
     sessionId,
     id: c.id,
     rawId: arrayB64u(c.rawId),
+    type: "public-key", // the server-side parser rejects bodies without it
     response: {
       attestationObject: arrayB64u(res.attestationObject),
       clientDataJSON: arrayB64u(res.clientDataJSON),
@@ -231,6 +232,7 @@ function assertionBody(c: PublicKeyCredential, sessionId: string): string {
     sessionId,
     id: c.id,
     rawId: arrayB64u(c.rawId),
+    type: "public-key",
     response: {
       authenticatorData: arrayB64u(res.authenticatorData),
       clientDataJSON: arrayB64u(res.clientDataJSON),
