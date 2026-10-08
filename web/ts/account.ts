@@ -16,6 +16,7 @@ interface ShareRow {
   kind: "text" | "bundle";
   burn: boolean;
   expires: number;
+  views?: number;
 }
 
 // fragment stash: create flow stores <id> -> key fragment client-side so the
@@ -92,8 +93,8 @@ export async function refreshMe(): Promise<void> {
       nameInput.classList.add("hidden");
       login.classList.add("hidden");
       out.classList.remove("hidden");
-      ($("dashview") as HTMLElement).classList.remove("hidden");
-      void dashboardRefresh();
+      ($("dashlink") as HTMLElement).classList.remove("hidden");
+      ($("dashview") as HTMLElement).classList.add("hidden"); // overview lives on /dash now
     } else {
       poll.textContent =
         me.open === false ? "sign in - new registrations are closed" : "create an account - passkey only";
@@ -308,11 +309,132 @@ export async function bootAccount(): Promise<void> {
   $("regbtn").addEventListener("click", () => void registerStart());
   $("loginbtn").addEventListener("click", () => void loginStart());
   $("logoutbtn").addEventListener("click", () => void logout());
-  $("refreshout").addEventListener("click", () => void dashboardRefresh());
   // statistics refresh whenever the lightbox opens or closes
   const panel = $("accpanel") as HTMLElement;
   panel.addEventListener("toggle", () => {
     if ((panel as HTMLElement & { open: boolean }).open) void refreshMe();
   });
   await refreshMe();
+}
+
+// --- the real dashboard page (/dash) ---
+// Detailed share overview: copy-link per row, alive countdown, views counter,
+// plus the identity edit section (name, add passkey).
+
+function shareURL(r: ShareRow): string {
+  return location.origin + "/p/" + r.id + (fragGet(r.id) ? "#" + fragGet(r.id) : "");
+}
+
+export async function dashboardPage(): Promise<void> {
+  document.body.textContent = "";
+  const main = document.createElement("main");
+  const head = document.createElement("header");
+  head.className = "top";
+  head.appendChild(
+    Object.assign(document.createElement("a"), {
+      className: "brand",
+      href: "/",
+      textContent: "zeropaste",
+    } as Partial<HTMLAnchorElement>),
+  );
+  main.appendChild(head);
+  const card = document.createElement("section");
+  card.className = "card";
+  card.id = "dashfull";
+  card.innerHTML = "<h2 class='dashtitle'>your active shares</h2>" +
+    "<div id='dashrows'></div>" +
+    "<div class='dashedit hidden' id='dashedit'>" +
+    "  <b>account</b>" +
+    "  <div class='accrow'>" +
+    "    <input type='text' id='dashname' maxlength='64' placeholder='display name' autocomplete='off'>" +
+    "    <button type='button' id='dashsave'>Save name</button>" +
+    "    <button type='button' id='dashreg'>Add passkey</button>" +
+    "  </div>" +
+    "  <div id='dasherr' class='hint danger hidden'></div>" +
+    "</div>" +
+    "<div class='hint'>Links carry the decryption key in the fragment; the server cannot read any of them. Rows disappear when the share expires or burns.</div>";
+  main.appendChild(card);
+  document.body.appendChild(main);
+
+  $("dashsave").addEventListener("click", () => void saveName());
+  $("dashreg").addEventListener("click", () => {
+    (document.getElementById("dashreg") as HTMLButtonElement).disabled = true;
+    registerStart()
+      .then(() => void loadDash())
+      .catch((e) => dashError(e instanceof Error ? e.message : "failed"));
+  });
+
+  await loadDash();
+}
+
+async function saveName(): Promise<void> {
+  try {
+    const res = await fetch("/api/identity/name", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: ($("dashname") as HTMLInputElement).value }),
+    });
+    if (!res.ok) {
+      throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "name save failed");
+    }
+    ($("dasherr") as HTMLElement).classList.add("hidden");
+    await loadDash();
+  } catch (e) {
+    dashError(e instanceof Error ? e.message : "name save failed");
+  }
+}
+
+function dashError(msg: string): void {
+  const err = $("dasherr");
+  err.textContent = msg;
+  err.classList.remove("hidden");
+}
+
+async function loadDash(): Promise<void> {
+  const me = (await (await fetch("/api/me")).json()) as MeRec;
+  if (!me.name) return; // anonymous: routers out; the page stays empty
+  ($("dashedit") as HTMLElement).classList.remove("hidden");
+  ($("dashname") as HTMLInputElement).value = me.name;
+  const rowsBox = $("dashrows") as HTMLElement;
+  rowsBox.textContent = "";
+  const res = await fetch("/api/shares");
+  const rows = (await res.json()) as ShareRow[];
+  if (rows.length === 0) {
+    rowsBox.innerHTML = "";
+    rowsBox.appendChild(Object.assign(document.createElement("div"), {
+      className: "hint",
+      textContent: "Nothing active yet - share a paste or file bundle while signed in.",
+    } as Partial<HTMLDivElement>));
+    return;
+  }
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.className = "srow";
+    const link = document.createElement("a");
+    link.href = shareURL(r);
+    link.textContent = "/p/" + r.id.slice(0, 6) + "…";
+    const kind = document.createElement("span");
+    kind.textContent = r.kind === "bundle" ? "files" : "text";
+    kind.className = "skind";
+    const views = document.createElement("span");
+    views.textContent = (r.views ?? 0) + " views";
+    views.className = "susers";
+    const alive = document.createElement("span");
+    alive.textContent = r.burn ? "" : expiryText(r.expires);
+    alive.className = "swhen";
+    const cp = document.createElement("button");
+    cp.type = "button";
+    cp.className = "rowcopy";
+    cp.setAttribute("aria-label", "Copy share link");
+    cp.textContent = "copy link";
+    cp.addEventListener("click", () => {
+      void (async () => {
+        await navigator.clipboard.writeText(shareURL(r));
+        cp.textContent = "copied!";
+        setTimeout(() => (cp.textContent = "copy link"), 1200);
+      })();
+    });
+    row.append(link, kind, views, alive, cp);
+    rowsBox.append(row);
+  }
 }

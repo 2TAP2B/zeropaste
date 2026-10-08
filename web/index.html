@@ -25,16 +25,19 @@
     </button>
   </header>
 
-  <!-- account lightbox: create account (passkey-only) + shares overview -->
+  <!-- account lightbox: create account (passkey-only) + link to dashboard -->
   <div id="accpanel" popover>
     <b id="accpoll">create account or sign in - passkey only</b>
-    <div class="accrow">
+    <div class="accrow" id="signactions">
+      <a href="/dash" id="dashlink" class="hidden">Open dashboard</a>
+      <button type="button" id="logoutbtn" class="hidden">Sign out</button>
+    </div>
+    <div class="accrow" id="createactions">
       <input type="text" id="accname" placeholder="a name for your passkeys" autocomplete="off">
       <button type="button" id="regbtn">Create account</button>
     </div>
     <div class="accrow" id="loginrow">
       <button type="button" id="loginbtn">Sign in with passkey</button>
-      <button type="button" id="logoutbtn" class="hidden">Sign out</button>
     </div>
     <div id="accerr" class="hint danger hidden"></div>
     <div id="browserhint" class="hint hidden">Passkeys need HTTPS (or localhost). You are on an insecure origin - open the site over its real domain.</div>
