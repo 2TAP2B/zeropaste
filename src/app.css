@@ -1,0 +1,105 @@
+/* ZeroPaste theme: light/dark, pastel purple accent */
+:root {
+	--zp-font: system-ui, -apple-system, sans-serif;
+	--zp-bg: #f5f3fa;
+	--zp-surface: #ffffff;
+	--zp-surface2: #efecf7;
+	--zp-text: #2f2a3d;
+	--zp-text-soft: #6f6683;
+	--zp-accent: #a78bda;
+	--zp-accent-soft: #d9ccf3;
+	--zp-accent-text: #4c3a72;
+	--zp-danger: #d98ba8;
+	--zp-ring: rgba(167, 139, 218, 0.4);
+	--zp-radius: 14px;
+	--zp-shadow: 0 8px 24px rgba(76, 58, 114, 0.12);
+}
+
+:root[data-theme='dark'] {
+	--zp-bg: #1d1927;
+	--zp-surface: #272130;
+	--zp-surface2: #322b40;
+	--zp-text: #ece8f4;
+	--zp-text-soft: #a79fbe;
+	--zp-accent: #b8a1e8;
+	--zp-accent-soft: #4a3f66;
+	--zp-accent-text: #e4d9fb;
+	--zp-danger: #c97d9d;
+	--zp-ring: rgba(184, 161, 232, 0.45);
+	--zp-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	font-family: var(--zp-font);
+	background: var(--zp-bg);
+	color: var(--zp-text);
+	min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea,
+a.zp-btn {
+	font: inherit;
+	color: inherit;
+}
+
+.zp-btn {
+	border: 1px solid transparent;
+	border-radius: 999px;
+	padding: 0.55rem 1.2rem;
+	cursor: pointer;
+	transition: background 0.15s ease;
+}
+.zp-btn.primary {
+	background: var(--zp-accent);
+	color: #fff;
+}
+:root[data-theme='light'] .zp-btn.primary {
+	color: #fff;
+}
+.zp-btn.primary:hover {
+	filter: brightness(0.94);
+}
+.zp-btn.ghost {
+	background: var(--zp-accent-soft);
+	color: var(--zp-accent-text);
+}
+.zp-btn.danger {
+	background: transparent;
+	border: 1px solid var(--zp-danger);
+	color: var(--zp-danger);
+}
+
+input[type='text'],
+input[type='password'],
+textarea,
+select {
+	border-radius: var(--zp-radius);
+	border: 1px solid var(--zp-accent-soft);
+	background: var(--zp-surface);
+	padding: 0.55rem 0.9rem;
+	outline: none;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+	box-shadow: 0 0 0 3px var(--zp-ring);
+}
+
+.zp-card {
+	background: var(--zp-surface);
+	border-radius: var(--zp-radius);
+	box-shadow: var(--zp-shadow);
+	padding: 1.4rem;
+}
+
+.zp-soft {
+	color: var(--zp-text-soft);
+}
