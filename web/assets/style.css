@@ -31,7 +31,8 @@
   body {
     font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
     background: var(--bg); color: var(--text);
-    display: flex; justify-content: center; padding: clamp(1.25rem, 4vh, 3rem) 1rem;
+    display: flex; flex-direction: column; align-items: center;
+    padding: clamp(1.25rem, 4vh, 3rem) 1rem;
     line-height: 1.5; -webkit-text-size-adjust: 100%;
   }
   main { width: 100%; max-width: 680px; }
