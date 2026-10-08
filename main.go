@@ -1045,17 +1045,19 @@ func (c *ceremony) getLog(id string) (webauthn.SessionData, bool) {
 }
 
 // rpFromRequest derives the webauthn config from the request: RPID = host
-// (no port), origin = scheme + host. Works for any hostname in front.
+// (no port), origin = scheme + host. Both schemes are allowed because the
+// proxy in front may or may not forward X-Forwarded-Proto; the RPID pin is
+// what protects the ceremony, not the scheme string.
 func rpFromRequest(r *http.Request) *webauthn.WebAuthn {
 	host := r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	proto := "http"
-	if r.Header.Get("X-Forwarded-Proto") != "" {
-		proto = r.Header.Get("X-Forwarded-Proto")
-	}
-	w, err := webauthn.New(&webauthn.Config{RPID: host, RPDisplayName: "zeropaste", RPOrigins: []string{proto + "://" + r.Host}})
+	w, err := webauthn.New(&webauthn.Config{
+		RPID:          host,
+		RPDisplayName: "zeropaste",
+		RPOrigins:     []string{"https://" + host, "http://" + host},
+	})
 	if err != nil {
 		return nil
 	}
@@ -1097,7 +1099,11 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 		if existing != nil {
 			user = *existing // attach another passkey to this identity
 		} else {
-			user = identity{ID: newSessionID(), Name: q.Name}
+			name := q.Name
+			if strings.TrimSpace(name) == "" {
+				name = "friend"
+			}
+			user = identity{ID: newSessionID(), Name: name}
 		}
 		creation, sd, err := wa.BeginRegistration(&user)
 		if err != nil {

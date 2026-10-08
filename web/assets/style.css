@@ -221,15 +221,23 @@
     .card { padding: 1rem; }
     .row { flex-direction: column; align-items: stretch; gap: .6rem; }
     select, button, input[type="text"], input[type="password"] { width: 100%; }
+    /* compact controls: the mobile keyboard reads better at this size */
+    input[type="text"], input[type="password"] { padding: .45rem .6rem; font-size: .85rem; }
     .copybtn { width: auto; justify-content: center; }
     #ttl { width: 100%; }
-    .burnrow #pass { width: 100%; }
+    .burnrow #pass { width: 100%; flex: none; } /* flex-basis is HEIGHT in a column container */
     button { justify-content: center; }
     textarea { min-height: 180px; font-size: 1rem; }
     .link-box input { flex-basis: auto; }
     .paste-view { padding-top: 3.75rem; font-size: 1rem; }
     .copybtn { padding: .65rem; }
     .copybtn svg { width: 17px; height: 17px; }
+    /* header: brand alone on one line, controls right */
+    .brand span { display: none; }
+    .top { gap: .5rem; margin-bottom: 1rem; }
+    /* footer: the in-text buttons are links, not full-width controls */
+    .foot-link, .foot button { width: auto; padding: 0; }
+    .foot { line-height: 1.6; }
   }
   .qrwrap {
     margin-top: 1.25rem; text-align: center;
