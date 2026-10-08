@@ -5,7 +5,7 @@ import { initTheme } from "./theme";
 import { readView } from "./read";
 import { uploadBundle, abortUpload, UploadAborted } from "./uploads";
 import { selfcheck } from "./selfcheck";
-import { bootAccount, stashForCreate } from "./account";
+import { bootAccount, stashForCreate, dashboardPage } from "./account";
 
 const burnOn = (): boolean => $("burn").getAttribute("aria-pressed") === "true";
 $("burn").addEventListener("click", () =>
@@ -256,6 +256,9 @@ if (location.search.includes("selfcheck")) {
   preEl.id = "selfout";
   document.body.appendChild(preEl);
   void selfcheck();
+} else if (location.pathname === "/dash") {
+  initTheme();
+  void dashboardPage();
 } else if (location.pathname.startsWith("/p/")) {
   initTheme();
   readView();

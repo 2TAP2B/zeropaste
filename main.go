@@ -83,7 +83,8 @@ type paste struct {
 	HL      bool   `json:"hl,omitempty"`   // syntax highlighting requested
 	Burn    bool   `json:"burn"`           // delete after first fetch (immediately unless passphrase-protected)
 	Expires int64  `json:"expires"`
-	Len     int64  `json:"len,omitempty"` // blob sizes: ciphertext length; presence switches the reader to file mode
+	Len     int64  `json:"len,omitempty"`   // blob sizes: ciphertext length; presence switches the reader to file mode
+	Views   int64  `json:"views,omitempty"` // opens counter (aggregate only - no IPs, no request logs)
 }
 
 // envBytes parses a raw byte count (plain integer) with hard clamps.
@@ -172,6 +173,8 @@ func build(dir, createKey string) http.Handler {
 	mux.Handle("POST /api/identity/login/finish", secure(rl.guard(hf(sess.loginFinish(cer)))))
 	mux.Handle("POST /api/identity/logout", secure(hf(sess.logout())))
 	mux.Handle("GET /api/shares", secure(hf(owns.list())))
+	mux.Handle("POST /api/identity/name", secure(rl.guard(hf(sess.identityName()))))
+	mux.Handle("GET /dash", secure(hf(serveIndex))) // dashboard SPA route
 	return mux
 }
 
@@ -396,6 +399,8 @@ func readAPI(dir string) http.HandlerFunc {
 		// Passphrase-protected pastes skip burn-on-read: a link unfurler or
 		// wrong-passphrase visitor must not destroy the paste. The client
 		// deletes via DELETE /api/paste/{id} after a successful decrypt.
+		p.Views++ // aggregate opens counter; races may drop a hit (a ceiling, monotonic-ish)
+		persistViews := false
 		if p.Burn && p.Salt == "" {
 			if p.Len > 0 {
 				// ponytail: blob bundles can't be deleted per-range statelessly;
@@ -404,14 +409,22 @@ func readAPI(dir string) http.HandlerFunc {
 				// the fragment key; a link unfurler sees none of it. Racing
 				// readers share the window (same ceiling class as text burns).
 				p.Expires = time.Now().Unix() - 1 + burnWindowSec // sweep treats `< now` strictly; start one second back
+				persistViews = true
 				if b, err := json.Marshal(p); err == nil {
 					os.WriteFile(path, b, 0o600)
 				}
 			} else if err := os.Remove(path); err != nil {
 				log.Print(err)
+			} // text burn: file deleted, counter dies with it
+		} else {
+			persistViews = true
+		}
+		if persistViews {
+			if b, err := json.Marshal(p); err == nil {
+				os.WriteFile(path, b, 0o600)
 			}
 		}
-		out := map[string]any{"salt": p.Salt, "hl": p.HL, "burn": p.Burn, "expires": p.Expires}
+		out := map[string]any{"salt": p.Salt, "hl": p.HL, "burn": p.Burn, "expires": p.Expires, "views": p.Views}
 		if p.Len > 0 {
 			out["len"] = p.Len
 		} else {
@@ -1360,7 +1373,7 @@ func (si *shareIndex) list() http.HandlerFunc {
 			if p.Len > 0 {
 				kind = "bundle"
 			}
-			out = append(out, map[string]any{"id": name, "kind": kind, "burn": p.Burn, "expires": p.Expires})
+			out = append(out, map[string]any{"id": name, "kind": kind, "burn": p.Burn, "expires": p.Expires, "views": p.Views})
 		}
 		respond(w, 200, out)
 	}
@@ -1379,4 +1392,35 @@ func registrationOpen() bool {
 		log.Fatalf("REG_OPEN: %q invalid, want true/false", v)
 	}
 	return b
+}
+
+// identityName: signed-in display-name edit (dashboard section).
+func (s *sessions) identityName() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		i := s.identFrom(r)
+		if i == nil {
+			httpError(w, 401, "authorization required")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+		var q struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+			httpError(w, 400, "invalid request body")
+			return
+		}
+		name := strings.TrimSpace(q.Name)
+		if name == "" || len(name) > 64 {
+			httpError(w, 400, "name must be 1-64 characters")
+			return
+		}
+		i.Name = name
+		if err := s.saveIdentity(i); err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not store identity")
+			return
+		}
+		respond(w, 200, map[string]any{"name": i.Name})
+	}
 }

@@ -76,6 +76,13 @@
   .srow a:hover { color: var(--accent); border-bottom-color: var(--accent); }
   .skind { margin-left: auto; color: var(--muted); font-size: .75rem; }
   .swhen { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+  .susers { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+  .rowcopy { font-size: .75rem; padding: .3rem .65rem; flex: 0 0 auto; }
+  .dashtitle { font-size: 1rem; color: var(--accent); margin-bottom: .75rem; letter-spacing: .05em; }
+  .dashedit {
+    margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .75rem;
+  }
+  .dashedit b { color: var(--text); display: block; margin-bottom: .5rem; }
   .theme-toggle .sun { display: none; }
   :root[data-theme="light"] .theme-toggle .sun { display: block; }
   :root[data-theme="light"] .theme-toggle .moon { display: none; }

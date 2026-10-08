@@ -873,3 +873,115 @@ func TestCeremonyBodySingleRead(t *testing.T) {
 		t.Fatalf("login junk sessionId: %d %s", rec.Code, rec.Body)
 	}
 }
+
+// aggregated opens counter: two meta reads = views 2, and the counter must
+// survive burn-flip rewrites but NOT text-burn deletion
+func TestViewsCounter(t *testing.T) {
+	dir := t.TempDir()
+	h := build(dir, "")
+	rec := post(t, h, fmt.Sprintf(`{"data":%q,"ttl":"1h","burn":true}`, fakePayload()))
+	var created struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	_ = get(h, "/api/paste/"+created.ID)
+	var meta struct {
+		Views int `json:"views"`
+	}
+	_ = json.Unmarshal(get(h, "/api/paste/"+created.ID).Body.Bytes(), &meta)
+	if meta.Views > 2 {
+		t.Fatalf("burned text counted on deletion path: %d", meta.Views)
+	}
+
+	// non-burned bundle: meta read increments persist per open
+	tinyChunks(t)
+	s := testSession(t, dir)
+	cookie := sessionCookieFor(s)
+	// signed-in upload so the dash row records with a session cookie
+	upReq := httptest.NewRequest("POST", "/api/uploads", strings.NewReader(`{"len":21,"ttl":"1h"}`))
+	upReq.Header.Add("Cookie", cookie)
+	urec := httptest.NewRecorder()
+	h.ServeHTTP(urec, upReq)
+	if urec.Code != 200 {
+		t.Fatalf("signed init: %d", urec.Code)
+	}
+	ids := struct {
+		ID       string `json:"id"`
+		Chunks   int64  `json:"chunks"`
+		ChunkSze int64  `json:"chunkSize"`
+	}{}
+	if json.Unmarshal(urec.Body.Bytes(), &ids) != nil {
+		t.Fatalf("signed init body: %s", urec.Body)
+	}
+	put(t, h, "/api/uploads/"+ids.ID+"/0", make([]byte, 8), "")
+	put(t, h, "/api/uploads/"+ids.ID+"/1", make([]byte, 8), "")
+	put(t, h, "/api/uploads/"+ids.ID+"/2", make([]byte, 5), "")
+	// finish under the same cookie so the share row lands
+	req := httptest.NewRequest("POST", "/api/uploads/"+ids.ID+"/finish", nil)
+	req.Header.Add("Cookie", cookie)
+	frec := httptest.NewRecorder()
+	h.ServeHTTP(frec, req)
+	if frec.Code != 200 {
+		t.Fatalf("signed finish: %d", frec.Code)
+	}
+	var views int64
+	for i := 0; i < 3; i++ {
+		get(h, "/api/paste/"+ids.ID)
+		_ = json.Unmarshal(get(h, "/api/paste/"+ids.ID).Body.Bytes(), &meta)
+		if meta.Views < int(views) {
+			t.Fatalf("views went backwards: %d -> %d", views, meta.Views)
+		}
+		views = int64(meta.Views)
+	}
+	if views < 5 {
+		t.Fatalf("expected >=5 opens (1 upload + 6 meta reads), got %d", views)
+	}
+	// shares listing carries the counter (with the session cookie)
+	dreq := httptest.NewRequest("GET", "/api/shares", nil)
+	dreq.Header.Add("Cookie", cookie)
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, dreq)
+	var rows []map[string]any
+	_ = json.Unmarshal(rec2.Body.Bytes(), &rows)
+	if len(rows) == 0 || rows[0]["views"] == nil {
+		t.Fatalf("shares rows missing views: %v", rows)
+	}
+}
+
+// display-name edit: signed-in persistence, anon rejected
+func TestNameEdit(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	rec := postTo(t, h, "/api/identity/name", `{"name":"tobby"}`, "")
+	if rec.Code != 401 {
+		t.Fatalf("anon name edit: got %d, want 401", rec.Code)
+	}
+	req := httptest.NewRequest("POST", "/api/identity/name", strings.NewReader(`{"name":"tobias "}`))
+	req.Header.Add("Cookie", cookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "tobias") {
+		t.Fatalf("name edit: %d %s", rec.Code, rec.Body)
+	}
+	// me reflects the new name (session claims unchanged; identity file updated)
+	req = httptest.NewRequest("GET", "/api/me", nil)
+	req.Header.Add("Cookie", cookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), "tobias") {
+		t.Fatalf("me after rename: %s", rec.Body)
+	}
+	// blank/oversized names rejected
+	for _, n := range []string{`{"name":""}`, `{"name":"` + strings.Repeat("x", 65) + `"}`} {
+		req = httptest.NewRequest("POST", "/api/identity/name", strings.NewReader(n))
+		req.Header.Add("Cookie", cookie)
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != 400 {
+			t.Fatalf("bad name %q: got %d, want 400", n, rec.Code)
+		}
+	}
+}
