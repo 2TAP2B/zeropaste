@@ -940,16 +940,19 @@ func findIdentityByCred(idents string, credID []byte) *identity {
 	return nil
 }
 
-func (s *sessions) setCookie(w http.ResponseWriter, tok string, maxAge int) {
+func (s *sessions) setCookie(w http.ResponseWriter, r *http.Request, tok string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: tok, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, MaxAge: maxAge,
+		// plain-HTTP LANs stay supported; HTTPS origins (direct or proxied)
+		// get the Secure flag so the cookie never rides a cleartext hop
+		Secure: r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
 	})
 }
 
-func (s *sessions) issue(w http.ResponseWriter, id string) {
+func (s *sessions) issue(w http.ResponseWriter, r *http.Request, id string) {
 	tok := s.sign(sessionClaims{Sub: id, Exp: time.Now().Add(sessionTTL).Unix()})
-	s.setCookie(w, tok, int(sessionTTL/time.Second))
+	s.setCookie(w, r, tok, int(sessionTTL/time.Second))
 }
 
 // -- handlers --
@@ -966,8 +969,8 @@ func me(s *sessions) http.HandlerFunc {
 }
 
 func (s *sessions) logout() http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		s.setCookie(w, "", -1)
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.setCookie(w, r, "", -1)
 		respond(w, 200, map[string]bool{"ok": true})
 	}
 }
@@ -1153,7 +1156,7 @@ func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFun
 		if owns != nil {
 			owns.attach(user.ID)
 		}
-		s.issue(w, user.ID)
+		s.issue(w, r, user.ID)
 		respond(w, 200, map[string]any{"name": user.Name})
 	}
 }
@@ -1241,7 +1244,7 @@ func (s *sessions) loginFinish(c *ceremony) http.HandlerFunc {
 			httpError(w, 500, "could not store identity")
 			return
 		}
-		s.issue(w, ident.ID)
+		s.issue(w, r, ident.ID)
 		respond(w, 200, map[string]any{"name": ident.Name})
 	}
 }

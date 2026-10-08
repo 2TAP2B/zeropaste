@@ -782,3 +782,45 @@ func TestRegistrationClosed(t *testing.T) {
 		t.Fatalf("open flag: %+v", me)
 	}
 }
+
+// skill gate: session cookie carries Secure on HTTPS origins, stays usable
+// on deliberate plain-HTTP LAN deployments (SameSite/HttpOnly asserted too).
+func TestSessionCookieFlags(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	call := func(headers map[string]string) map[string]*http.Cookie {
+		req := httptest.NewRequest("POST", "/api/identity/logout", nil)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		req.Header.Set("Cookie", cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		out := map[string]*http.Cookie{}
+		for _, c := range rec.Result().Cookies() {
+			out[c.Name] = c
+		}
+		return out
+	}
+
+	// logout over plain http: clears cookie without Secure, flags intact
+	got := call(nil)
+	if c := got[sessionCookie]; c == nil {
+		t.Fatal("no clearing cookie returned")
+	} else if c.Secure {
+		t.Fatal("Secure set on plain http origin")
+	} else if !c.HttpOnly || c.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("cookie flags: %+v", c)
+	}
+
+	// proxied https: Secure present
+	got = call(map[string]string{"X-Forwarded-Proto": "https"})
+	if c := got[sessionCookie]; c == nil {
+		t.Fatal("no cookie for https origin")
+	} else if !c.Secure {
+		t.Fatal("Secure missing on X-Forwarded-Proto https")
+	}
+}
