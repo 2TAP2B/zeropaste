@@ -259,6 +259,7 @@ if (location.search.includes("selfcheck")) {
 } else if (location.pathname.startsWith("/p/")) {
   initTheme();
   readView();
+  void bootAccount(); // /p pages share the header: the account chip must reflect the session too
 } else {
   void gateFlow();
   void bootAccount();
