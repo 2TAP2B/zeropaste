@@ -53,6 +53,8 @@ No other files belong here. `data/` (runtime store) is created on demand and mus
 
 Base: all routes carry security headers via `secure()` middleware. Errors are JSON `{"error": "<generic message>"}` — never internal details.
 
+**Hardening posture (audit trail, see the security-and-hardening skill):** validation at every boundary (ttl parse, length caps, strict base64url, `validID` charset = the sole path gate, `MaxBytesReader` everywhere); CSRF blocked by construction (state-changing endpoints require JSON/bearer content, cross-site preflight fails — no CORS headers are ever emitted); cookies HttpOnly+SameSite=Lax+`Secure` when the request is HTTPS (direct TLS or `X-Forwarded-Proto`) with bounded MaxAge; secrets only from env/`.session.key` (gitignored `data/`); no request logs, no IPs; retention = TTL janitor. Supply chain: `govulncheck ./...` runs in the release gate — GO-2026-5932 (x/crypto/openpgp, module-level only, not reachable, no fix published) is the documented standing deferral.
+
 ### `POST /api/paste` (rate limited: 30/min/IP, then HTTP 429)
 
 Request JSON:
