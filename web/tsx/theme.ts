@@ -1,6 +1,17 @@
-import { $ } from "./dom";
+import { signal } from "@preact/signals";
+import type { Theme } from "./types";
 
-export type Theme = "light" | "dark";
+export const theme = signal<Theme>(
+  (() => {
+    try {
+      const saved = localStorage.getItem("zp.theme");
+      if (saved === "light" || saved === "dark") return saved;
+    } catch {
+      /* private mode */
+    }
+    return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  })(),
+);
 
 export function applyTheme(t: Theme): void {
   document.documentElement.dataset.theme = t;
@@ -18,24 +29,9 @@ export function applyTheme(t: Theme): void {
     const link = document.getElementById(el.id) as HTMLLinkElement | null;
     if (link) link.media = el.theme === t ? "all" : "not all";
   }
+  theme.value = t;
 }
 
-export function initTheme(): void {
-  let saved: string | null = null;
-  try {
-    saved = localStorage.getItem("zp.theme");
-  } catch {
-    /* private mode */
-  }
-  const preferred: Theme =
-    saved === "light" || saved === "dark"
-      ? saved
-      : matchMedia("(prefers-color-scheme: light)").matches
-        ? "light"
-        : "dark";
-  applyTheme(preferred);
-  $("theme").addEventListener("click", () => {
-    const cur = document.documentElement.dataset.theme;
-    applyTheme(cur === "light" ? "dark" : "light");
-  });
+export function toggleTheme(): void {
+  applyTheme(theme.value === "light" ? "dark" : "light");
 }

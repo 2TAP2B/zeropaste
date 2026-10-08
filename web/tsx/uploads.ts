@@ -67,7 +67,8 @@ export async function uploadBundle(o: UploadOpts): Promise<UploadResult> {
     method: "POST",
     headers: jsonHeaders(),
     body: JSON.stringify({ len: blob.length, ttl: o.ttl, burn: o.burn, salt: saltB64 ?? "" }),
-  });  if (!req.ok) {
+  });
+  if (!req.ok) {
     throw new Error(((await req.json().catch(() => ({}))) as { error?: string }).error ?? "upload init failed");
   }
   const init = (await req.json()) as { id: string; chunkSize: number; chunks: number };

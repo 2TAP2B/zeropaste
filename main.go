@@ -226,7 +226,7 @@ func secure(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Security-Policy",
-			"default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+			"default-src 'self'; img-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
 }

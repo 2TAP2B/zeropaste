@@ -1,4 +1,4 @@
-import { enc, dec } from "./dom";
+import { $, enc, dec } from "./dom";
 
 const PBKDF2_ITERATIONS = 600000; // OWASP recommendation for PBKDF2-HMAC-SHA256
 
