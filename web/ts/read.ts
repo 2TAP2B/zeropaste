@@ -171,6 +171,19 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
       }
     });
     row.append(name, size, save);
+    // image preview: jpg/png/gif/webp under 5 MiB decrypt eagerly
+    if (/^image\/(jpeg|png|gif|webp)$/.test(f.mime) && f.size <= 5 << 20) {
+      void fetchRangeExact(paste, start, f.size)
+        .then((data) => openBytes(key, bytesFromB64u(f.iv), data))
+        .then((full) => {
+          const img = document.createElement("img");
+          img.className = "preview";
+          img.alt = f.name;
+          img.src = URL.createObjectURL(new Blob([full], { type: f.mime }));
+          row.prepend(img);
+        })
+        .catch(() => {}); // preview is decorative; Save still works
+    }
     list.append(row);
     off += f.size;
   }
