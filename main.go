@@ -288,7 +288,7 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if r.URL.Path != "/" && !strings.HasPrefix(r.URL.Path, "/p/") {
+	if r.URL.Path != "/" && !strings.HasPrefix(r.URL.Path, "/p/") && r.URL.Path != "/dash" {
 		http.NotFound(w, r)
 		return
 	}

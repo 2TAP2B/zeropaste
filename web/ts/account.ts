@@ -76,7 +76,7 @@ export async function refreshMe(): Promise<void> {
     const out = $("logoutbtn") as HTMLButtonElement;
     const poll = $("accpoll") as HTMLElement;
 
-    const signedIn = !!me.name;
+    signedIn = !!me.name;
     const insecure = !window.isSecureContext && !location.hostname.includes("localhost") && !location.hostname.includes("127.0.0.1");
     ($("browserhint") as HTMLElement).classList.toggle("hidden", !insecure);
     if (insecure) {
@@ -309,6 +309,14 @@ export async function bootAccount(): Promise<void> {
   $("regbtn").addEventListener("click", () => void registerStart());
   $("loginbtn").addEventListener("click", () => void loginStart());
   $("logoutbtn").addEventListener("click", () => void logout());
+  // the header button: signed-in users go straight to /dash, others get the lightbox
+  $("accbtn").addEventListener("click", () => {
+    if (signedIn) {
+      location.href = "/dash";
+      return;
+    }
+    (document.getElementById("accpanel") as HTMLDivElement).showPopover();
+  });
   // statistics refresh whenever the lightbox opens or closes
   const panel = $("accpanel") as HTMLElement;
   panel.addEventListener("toggle", () => {
@@ -316,6 +324,8 @@ export async function bootAccount(): Promise<void> {
   });
   await refreshMe();
 }
+
+let signedIn = false;
 
 // --- the real dashboard page (/dash) ---
 // Detailed share overview: copy-link per row, alive countdown, views counter,
