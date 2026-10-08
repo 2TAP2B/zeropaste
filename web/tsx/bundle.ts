@@ -1,3 +1,4 @@
+import { $ } from "./dom";
 import { sealBytes, openBytes, b64uFromBytes, AesKey, Sealed } from "./crypto";
 import { enc, dec } from "./dom";
 
@@ -28,6 +29,18 @@ export function u32le(n: number): Uint8Array<ArrayBuffer> {
   return b;
 }
 
+export function concatBytes(parts: Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuffer> {
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
+
 export async function assembleEnv(
   key: AesKey,
   note: string,
@@ -56,20 +69,7 @@ export async function assembleEnv(
   pre.set(u32le(ms.ct.length), 0);
   pre.set(ms.iv, 4);
   pre.set(ms.ct, 16);
-  const parts: Uint8Array<ArrayBuffer>[] = [pre, ...encs.map((e) => e.ct)];
-  return concatBytes(parts);
-}
-
-export function concatBytes(parts: Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuffer> {
-  let total = 0;
-  for (const p of parts) total += p.length;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const p of parts) {
-    out.set(p, off);
-    off += p.length;
-  }
-  return out;
+  return concatBytes([pre, ...encs.map((e) => e.ct)]);
 }
 
 export async function parseEnvHead(

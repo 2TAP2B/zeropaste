@@ -8,152 +8,56 @@
 <meta property="og:description" content="share secrets, not plaintext — zero-knowledge pastes, encrypted in your browser">
 <meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.4.2" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.4.2" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.4.2">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.6.0-3" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.6.0-3" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.6.0-3">
 </head>
 <body>
-<main>
-  <header class="top">
-    <a class="brand" href="/">zeropaste <span>/ zero-knowledge pastes</span></a>
-    <button type="button" class="theme-toggle" id="theme" aria-label="Toggle light and dark theme" title="Toggle theme">
-      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>
-    </button>
-    <button type="button" class="theme-toggle accbtn" id="accbtn" aria-label="Account" title="Account and shares">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-    </button>
-  </header>
+<main id="app">
+  <noscript>zeropaste encrypts and decrypts locally in your browser - JavaScript is required.</noscript>
+</main>
 
-  <!-- account lightbox: create account (passkey-only) + link to dashboard -->
-  <div id="accpanel" popover>
-    <b id="accpoll">create account or sign in - passkey only</b>
-    <div class="accrow" id="signactions">
-      <a href="/dash" id="dashlink" class="hidden">Open dashboard</a>
-      <button type="button" id="logoutbtn" class="hidden">Sign out</button>
-    </div>
-    <div class="accrow" id="createactions">
-      <input type="text" id="accname" placeholder="a name for your passkeys" autocomplete="off">
-      <button type="button" id="regbtn">Create account</button>
-    </div>
-    <div class="accrow" id="loginrow">
-      <button type="button" id="loginbtn">Sign in with passkey</button>
-    </div>
-    <div id="accerr" class="hint danger hidden"></div>
-    <div id="browserhint" class="hint hidden">Passkeys need HTTPS (or localhost). You are on an insecure origin - open the site over its real domain.</div>
-    <div id="dashview" class="hidden">
-      <div class="dashhead">
-        <b>your active shares</b>
-        <button type="button" id="refreshout">refresh</button>
-      </div>
-      <div id="sharelist"></div>
-      <div class="hint">Rows re-open using the key remembered in this browser. Clearing site data forgets them.</div>
-    </div>
+<footer class="foot">
+  <div>
+    <b>zeropaste</b> — zero-knowledge pastes ·
+    <button type="button" class="foot-link" popovertarget="quickstart">self-host</button> ·
+    <a href="https://github.com/2TAP2B/zeropaste" rel="noopener">source code</a>
   </div>
+</footer>
 
-<!-- site gate: full-screen pre-screen when CREATE_KEY is set -->
-  <section id="gate" class="card hidden">
-    <div class="hint big">This instance is passphrase-protected.</div>
-    <div class="row">
-      <input type="password" id="gatepass" placeholder="site passphrase" autocomplete="off">
-      <button class="primary" id="gatebtn">Unlock</button>
-    </div>
-    <div id="gateerr" class="hint danger hidden"></div>
-  </section>
+<!-- account lightbox: passkey-only create/sign-in; signed-in users get the /dash link -->
+<div id="accpanel" popover>
+  <b id="accpoll">create account or sign in - passkey only</b>
+  <div class="accrow" id="signactions">
+    <a href="/dash" id="dashlink" class="hidden">Open dashboard</a>
+    <button type="button" id="logoutbtn" class="hidden">Sign out</button>
+  </div>
+  <div class="accrow" id="createactions">
+    <input type="text" id="accname" placeholder="a name for your passkeys" autocomplete="off">
+    <button type="button" id="regbtn">Create account</button>
+  </div>
+  <div class="accrow" id="loginrow">
+    <button type="button" id="loginbtn">Sign in with passkey</button>
+  </div>
+  <div id="accerr" class="hint danger hidden"></div>
+  <div id="browserhint" class="hint hidden">Passkeys need HTTPS (or localhost). You are on an insecure origin - open the site over its real domain.</div>
+</div>
 
-  <!-- compose -->
-  <section id="compose" class="card">
-    <textarea id="text" placeholder="Type or paste anything — text, passwords, snippets…" spellcheck="false" autofocus></textarea>
-    <div id="dropzone">
-      <input type="file" id="fileinput" multiple class="hidden">
-      <span>drop files here — or click to browse</span>
-    </div>
-    <div id="files" class="hidden"></div>
-    <div id="prog" class="hidden">
-      <div class="progwrap">
-        <div id="progbar"><div id="progfill"></div></div>
-        <span id="proglabel"></span>
-        <button type="button" id="progcancel">Cancel</button>      </div>
-    </div>
-    <div class="row burnrow">
-      <div class="field">
-        <label class="field-label" for="ttl">burn paste after</label>
-        <input type="text" id="ttl" value="1d" aria-label="Burn time" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" placeholder='e.g. "10 min", "6h", "1d"'>
-      </div>
-      <button type="button" class="toggle" id="burn" aria-pressed="false">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path></svg>
-        burn after reading
-      </button>
-      <input type="password" id="pass" placeholder="optional passphrase — protects the link" autocomplete="new-password">
-    </div>
-    <div class="row">
-      <button class="primary" id="create">Encrypt & share</button>
-    </div>
-    <div id="composeerr" class="hint danger hidden"></div>
-    <div class="hint">With a passphrase the link alone is useless; share it over a different channel. The passphrase never reaches the server.</div>
-  </section>
-
-  <!-- link after create -->
-  <section id="linkbox" class="card hidden">
-    <div class="hint">Share this link. The decryption key never leaves the browser.</div>
-    <div id="passnote" class="hint danger hidden">This link is passphrase-protected — send the passphrase separately, not with the link.</div>
-    <div class="link-box">
-      <input id="share" readonly title="Click the link to copy">
-      <button id="copylink">Copy</button>
-      <button id="again">New paste</button>
-    </div>
-    <div class="qrwrap">
-      <div id="qr"></div>
-    </div>
-  </section>
-
-  <!-- read -->
-  <section id="read" class="card hidden">
-    <div id="readerr" class="error hidden"></div>
-    <div id="unlock" class="hidden">
-      <div class="hint">This paste is passphrase-protected.</div>
-      <div class="row">
-        <input type="password" id="unlockpass" placeholder="passphrase" autocomplete="off">
-        <button class="primary" id="unlockbtn">Decrypt</button>
-      </div>
-      <div id="unlockerr" class="hint danger hidden"></div>
-    </div>
-    <div id="readbody" class="hidden">
-      <div class="codewrap">
-        <button class="copybtn" id="copytext" title="Copy" aria-label="Copy">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-        </button>
-        <pre class="paste-view"><code id="pasteview"></code></pre>
-      </div>
-      <div id="filelist"></div>
-      <div class="hint" id="burnnote"></div>
-      <div class="hint" id="expiresnote"></div>
-    </div>
-  </section>
-
-  <footer class="foot">
-    <div>
-      <b>zeropaste</b> — zero-knowledge pastes ·
-      <button type="button" class="foot-link" popovertarget="quickstart">self-host</button> ·
-      <a href="https://github.com/2TAP2B/zeropaste" rel="noopener">source code</a>
-    </div>
-  </footer>
-
-  <!-- quick-start lightbox: native popover, zero JS to open -->
-  <div id="quickstart" popover>
-    <b>self-host in 30 seconds</b>
-    <div class="qs-block">
-      <button type="button" class="copybtn" aria-label="Copy docker command" data-copy="qs-run">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-      </button>
-      <pre><code id="qs-run">docker run -d --name zeropaste -p 8080:8080 -v paste-data:/data ghcr.io/2tap2b/zeropaste:latest</code></pre>
-    </div>
-    <div class="qs-label">or compose.yaml</div>
-    <div class="qs-block">
-      <button type="button" class="copybtn" aria-label="Copy compose file" data-copy="qs-compose">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-      </button>
-      <pre><code id="qs-compose">services:
+<!-- quick-start lightbox: native popover, zero JS to open -->
+<div id="quickstart" popover>
+  <b>self-host in 30 seconds</b>
+  <div class="qs-block">
+    <button type="button" class="copybtn" aria-label="Copy docker command" data-copy="qs-run">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+    </button>
+    <pre><code id="qs-run">docker run -d --name zeropaste -p 8080:8080 -v paste-data:/data ghcr.io/2tap2b/zeropaste:latest</code></pre>
+  </div>
+  <div class="qs-label">or compose.yaml</div>
+  <div class="qs-block">
+    <button type="button" class="copybtn" aria-label="Copy compose file" data-copy="qs-compose">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+    </button>
+    <pre><code id="qs-compose">services:
   paste:
     image: ghcr.io/2tap2b/zeropaste:latest
     ports:
@@ -165,13 +69,12 @@
     restart: unless-stopped
 volumes:
   paste-data:</code></pre>
-    </div>
-    <div class="hint">Plain HTTP; put your TLS reverse proxy in front. Open the address and share — links assemble client-side.</div>
   </div>
-</main>
+  <div class="hint">Plain HTTP; put your TLS reverse proxy in front. Open the address and share — links assemble client-side.</div>
+</div>
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.4.2"></script>
+<script src="/assets/app.js?v=0.6.0-3"></script>
 </body>
 </html>

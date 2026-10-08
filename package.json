@@ -1,0 +1,17 @@
+{
+  "name": "zeropaste-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "esbuild --bundle web/tsx/app.tsx --outfile=web/assets/app.js --minify --target=es2020"
+  },
+  "dependencies": {
+    "preact": "^10.27.2",
+    "@preact/signals": "^2.0.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "esbuild": "0.27.2"
+  }
+}
