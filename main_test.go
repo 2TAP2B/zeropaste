@@ -824,3 +824,52 @@ func TestSessionCookieFlags(t *testing.T) {
 		t.Fatal("Secure missing on X-Forwarded-Proto https")
 	}
 }
+
+// The finish endpoints must read the request body exactly once: sessionId
+// extraction and the ceremony parser used to race over r.Body, so the second
+// reader hit EOF ('registration failed' / 'invalid login response').
+func TestCeremonyBodySingleRead(t *testing.T) {
+	dir := t.TempDir()
+	h := build(dir, "")
+
+	// begin caches the ceremony in memory
+	begun, rec := func() (string, *httptest.ResponseRecorder) {
+		rec := postTo(t, h, "/api/identity/register/begin", `{"name":"t"}`, "")
+		if rec.Code != 200 {
+			t.Fatalf("begin: %d %s", rec.Code, rec.Body)
+		}
+		var out struct {
+			SessionID string `json:"sessionId"`
+		}
+		if json.Unmarshal(rec.Body.Bytes(), &out) != nil || out.SessionID == "" {
+			t.Fatalf("begin: no session id: %s", rec.Body)
+		}
+		return out.SessionID, rec
+	}()
+
+	// finish without a sessionId -> invalid request body, not unknown session
+	rec = postTo(t, h, "/api/identity/register/finish", `{"response":{}}`, "")
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "invalid request body") {
+		t.Fatalf("no sessionId: %d %s", rec.Code, rec.Body)
+	}
+	// finish with a junk (not-begun) session id -> unknown session
+	rec = postTo(t, h, "/api/identity/register/finish", `{"sessionId":"nope"}`, "")
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "unknown session") {
+		t.Fatalf("junk sessionId: %d %s", rec.Code, rec.Body)
+	}
+	// finish with the begun id + a non-credential payload -> parser error,
+	// which proves the body reached the ceremony parser in full
+	rec = postTo(t, h, "/api/identity/register/finish", `{"sessionId":"`+begun+`"}`, "")
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "registration failed") {
+		t.Fatalf("junk credential: %d %s", rec.Code, rec.Body)
+	}
+	// login finish behaves the same
+	rec = postTo(t, h, "/api/identity/login/finish", `{"response":{}}`, "")
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "invalid request body") {
+		t.Fatalf("login no sessionId: %d %s", rec.Code, rec.Body)
+	}
+	rec = postTo(t, h, "/api/identity/login/finish", `{"sessionId":"nope"}`, "")
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "unknown session") {
+		t.Fatalf("login junk sessionId: %d %s", rec.Code, rec.Body)
+	}
+}

@@ -1067,16 +1067,24 @@ func rpFromRequest(r *http.Request) *webauthn.WebAuthn {
 	return w
 }
 
-func continueJSON(w http.ResponseWriter, r *http.Request) (string, bool) {
-	type body struct {
+// readCeremonyBody reads the whole finish-request body ONCE (the lib re-parses
+// from the same bytes; a second Reader read gets nothing - the old
+// 'registration failed'/'invalid login response' bugs).
+func readCeremonyBody(w http.ResponseWriter, r *http.Request) ([]byte, string, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		httpError(w, 400, "invalid request body")
+		return nil, "", false
+	}
+	var head struct {
 		SessionID string `json:"sessionId"`
 	}
-	var b body
-	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+	if json.Unmarshal(b, &head) != nil || head.SessionID == "" {
 		httpError(w, 400, "invalid request body")
-		return "", false
+		return nil, "", false
 	}
-	return b.SessionID, true
+	return b, head.SessionID, true
 }
 
 func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
@@ -1122,7 +1130,7 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 
 func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sid, ok := continueJSON(w, r)
+		body, sid, ok := readCeremonyBody(w, r)
 		if !ok {
 			return
 		}
@@ -1141,7 +1149,13 @@ func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFun
 			httpError(w, 400, "unknown session")
 			return
 		}
-		cred, err := wa.FinishRegistration(user, sd, r)
+		parsed, err := protocol.ParseCredentialCreationResponseBytes(body)
+		if err != nil {
+			log.Print(err)
+			httpError(w, 400, "registration failed")
+			return
+		}
+		cred, err := wa.CreateCredential(user, sd, parsed)
 		if err != nil {
 			log.Print(err)
 			httpError(w, 400, "registration failed")
@@ -1163,43 +1177,28 @@ func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFun
 
 func (s *sessions) loginBegin(c *ceremony) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// discoverable credentials: no user hint; identity resolved from the
-		// returned credential. Allowlist = every stored credential id.
+		// discoverable credentials: no user hint; the lib builds the assertion
+		// payload, the userHandle resolves the identity at finish.
 		wa := rpFromRequest(r)
 		if wa == nil {
 			httpError(w, 500, "ceremony failed")
 			return
 		}
-		allow := [][]byte{}
-		for _, i := range listIdentities(filepath.Join(s.dir, "identities")) {
-			for _, c := range i.Creds {
-				allow = append(allow, c.ID)
-			}
-		}
-		sd := webauthn.SessionData{
-			Challenge:            newSessionID(),
-			RelyingPartyID:       wa.Config.RPID,
-			AllowedCredentialIDs: allow,
-			Expires:              time.Now().Add(2 * time.Minute),
-			UserVerification:     "preferred",
-		}
-		responseBody := map[string]any{
-			"publicKey": map[string]any{
-				"challenge":        base64.RawURLEncoding.EncodeToString([]byte(sd.Challenge)),
-				"rpId":             wa.Config.RPID,
-				"timeout":          60000,
-				"userVerification": "preferred",
-			},
+		assertion, sd, err := wa.BeginDiscoverableLogin()
+		if err != nil {
+			log.Print(err)
+			httpError(w, 500, "ceremony failed")
+			return
 		}
 		token := newSessionID()
-		c.putLog(token, sd)
-		respond(w, 200, map[string]any{"options": responseBody, "sessionId": token})
+		c.putLog(token, *sd)
+		respond(w, 200, map[string]any{"options": assertion, "sessionId": token})
 	}
 }
 
 func (s *sessions) loginFinish(c *ceremony) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sid, ok := continueJSON(w, r)
+		body, sid, ok := readCeremonyBody(w, r)
 		if !ok {
 			return
 		}
@@ -1213,23 +1212,30 @@ func (s *sessions) loginFinish(c *ceremony) http.HandlerFunc {
 			httpError(w, 500, "ceremony failed")
 			return
 		}
-		parsed, err := protocol.ParseCredentialRequestResponseBody(r.Body)
+		parsed, err := protocol.ParseCredentialRequestResponseBytes(body)
 		if err != nil {
 			httpError(w, 400, "invalid login response")
 			return
 		}
-		credID := credIDBytes(parsed.Response.UserHandle)
-		if len(credID) == 0 {
-			credID = credIDBytes(parsed.ID)
+		idents := filepath.Join(s.dir, "identities")
+		handler := func(rawID, userHandle []byte) (webauthn.User, error) {
+			ident := findIdentityByCred(idents, userHandle)
+			if ident == nil {
+				ident = findIdentityByCred(idents, rawID)
+			}
+			if ident == nil {
+				return nil, fmt.Errorf("unknown passkey")
+			}
+			return ident, nil
 		}
-		ident := findIdentityByCred(filepath.Join(s.dir, "identities"), credID)
-		if ident == nil {
-			httpError(w, 401, "unknown passkey")
-			return
-		}
-		updated, err := wa.ValidateLogin(ident, sd, parsed)
+		user, updated, err := wa.ValidatePasskeyLogin(handler, sd, parsed)
 		if err != nil {
 			log.Print(err)
+			httpError(w, 401, "login failed")
+			return
+		}
+		ident, ok := user.(*identity)
+		if !ok || ident == nil {
 			httpError(w, 401, "login failed")
 			return
 		}
