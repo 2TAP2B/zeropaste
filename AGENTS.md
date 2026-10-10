@@ -76,7 +76,7 @@ Success: 200 `{"id": "<11-char base64url of 8 random bytes>"}`. File written as 
 
 ### File uploads (chunked, resumable) — build on `/api/uploads`
 
-Config via env at startup: `MAX_BLOB` (default `2147483648` = 2 GiB, 1 MiB..64 GiB) total ciphertext per share; `CHUNK` (default `8388608` = 8 MiB, 64 KiB..64 MiB) per PUT and per range GET; `MAX_BLOB < CHUNK` is a fatal misconfig. Values are plain byte integers.
+Config via env at startup: `MAX_UPLOAD` (default `104857600` = 100 MiB, 1 MiB..64 GiB) total ciphertext per share; `CHUNK` (default `8388608` = 8 MiB, 64 KiB..64 MiB) per PUT and per range GET; `MAX_UPLOAD < CHUNK` is a fatal misconfig. Values are plain byte integers.
 
 - `POST /api/uploads` `{len, ttl, salt, burn}` → `{"id", "chunkSize": CHUNK, "chunks": ceil(len/CHUNK)}`. Body capped 1 KiB. Same ttl/salt validation as `POST /api/paste` (ttl shape only here; expiry computed at finish). Creates `data/uploads/<id>/upload.json` (`{len, ttl, salt, burn, created}`) 0600, dirs 0700. Id = 8 random bytes b64url, collision-checked against the uploads dir.
 - `PUT /api/uploads/{id}/{n}` — raw ciphertext chunk `n` (0-based). `validID` gates `{id}`; `n` strict int `0..chunks-1`; body `MaxBytesReader` at CHUNK+1, `1..CHUNK` bytes required. Overwrite = resume. **NOT rate limited** (a 2 GiB share is ~250 PUTs; body caps + temp quotas carry the protection). Behind the create-gate when enabled.
@@ -174,7 +174,7 @@ nix develop --command sh -c 'gofmt -l . && go vet ./... && go test ./... && esbu
 - Data-dir stage: `FROM alpine`, `mkdir /data && chown 65534:65534 /data`.
 - Runtime: `FROM scratch`; copy binary; **`COPY --chown=65534:65534 --from=data /data /data`** — the `--chown` is required: copying an *empty* directory into scratch silently drops its ownership and non-root writes then fail with "could not store paste".
 - `USER 65534:65534`, `EXPOSE 8080`, `VOLUME /data`, `ENTRYPOINT ["/paste"]`, `CMD ["-addr", ":8080", "-data", "/data"]`. Expected image size ≈ 9 MB.
-- `compose.yaml`: service uses the GHCR image, `8080:8080`, named volume `paste-data:/data`, `restart: unless-stopped` — and **runs fully public as-pasted** (self-host in 30 seconds): the `environment:` block carries every knob (`CREATE_KEY`, `USER_ACCOUNTS`, `USER_REGISTRATION`, `MAX_TTL_DAYS`, `MAX_SHARES_PER_ACCOUNT`, `REG_OPEN`, `MAX_BLOB`, `CHUNK`) as COMMENTED lines; a deploy uncomments what it needs — never commit a real key. No TLS in compose — TLS termination is a reverse-proxy concern (document separately at deploy time); the app stays plain HTTP.
+- `compose.yaml`: service uses the GHCR image, `8080:8080`, named volume `paste-data:/data`, `restart: unless-stopped` — and **runs fully public as-pasted** (self-host in 30 seconds): the `environment:` block carries every knob (`CREATE_KEY`, `USER_ACCOUNTS`, `USER_REGISTRATION`, `MAX_TTL_DAYS`, `MAX_SHARES_PER_ACCOUNT`, `REG_OPEN`, `MAX_UPLOAD`, `CHUNK`) as COMMENTED lines; a deploy uncomments what it needs — never commit a real key. No TLS in compose — TLS termination is a reverse-proxy concern (document separately at deploy time); the app stays plain HTTP.
 - Container smoke test: start mapped to a host port, POST a paste → 200, GET → 200, `/` → 200, `/assets/highlight.min.js` → 200.
 
 ## 10. When changing this project

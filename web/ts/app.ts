@@ -3,7 +3,7 @@ import { randomKey, deriveKey, seal, siteKey, b64uFromBytes } from "./crypto";
 import { show, copy, drawQR, humanSize } from "./ui";
 import { initTheme } from "./theme";
 import { readView } from "./read";
-import { uploadBundle, abortUpload, UploadAborted } from "./uploads";
+import { uploadBundle, abortUpload, UploadAborted, setClientMaxUpload } from "./uploads";
 import { selfcheck } from "./selfcheck";
 import { bootAccount, stashForCreate, dashboardPage } from "./account";
 
@@ -247,10 +247,11 @@ function enterCompose(): void {
 async function gateFlow(): Promise<void> {
   initTheme();
   try {
-    const cfg = (await (await fetch("/api/gate")).json()) as { enabled: boolean; maxTtlDays?: number };
+    const cfg = (await (await fetch("/api/gate")).json()) as { enabled: boolean; maxTtlDays?: number; maxUpload?: number };
     if (cfg.maxTtlDays && cfg.maxTtlDays !== 30) {
       $("ttllabel").textContent = "burn paste after (max " + cfg.maxTtlDays + "d)";
     }
+    if (cfg.maxUpload) setClientMaxUpload(cfg.maxUpload);
     if (!cfg.enabled) return enterCompose();
     const stored = siteKey.get();
     const unlock = async (key: string): Promise<void> => {

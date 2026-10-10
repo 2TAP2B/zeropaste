@@ -1,11 +1,16 @@
 import { randomKey, deriveKey, b64uFromBytes, AesKey } from "./crypto";
 import { assembleEnv } from "./bundle";
 
-// Byte-level caps mirror the server env defaults (MAX_BLOB). The server is
-// the authority; init rejects oversized shares regardless of this constant.
-// NOTE: 2 ** 31, not 2 << 30 - JS bitwise shifts are 32-bit signed, so the
-// shift form yields -2147483648 and silently caps every share at zero.
-export const CLIENT_MAX_BLOB = 2 ** 31;
+// Client-side byte cap mirrors the server MAX_UPLOAD default (100 MB). The
+// server is the authority — init rejects oversized shares regardless — and
+// gateFlow() syncs this to the instance ceiling via setClientMaxUpload so
+// larger deployments keep pre-checks honest without hardcoding envs client-side.
+// NOTE: 100*1024*1024 written out - JS bitwise shifts are 32-bit signed, so
+// the shift form yields -2147483648 and silently caps every share at zero.
+let clientMaxUpload = 100 * 1024 * 1024;
+export function setClientMaxUpload(bytes: number): void {
+  if (Number.isFinite(bytes) && bytes > 0) clientMaxUpload = bytes;
+}
 
 export interface UploadResult {
   id: string; // finished paste id
@@ -45,7 +50,7 @@ export async function uploadBundle(o: UploadOpts): Promise<UploadResult> {
   let totalFiles = 0;
   for (const f of o.files) {
     totalFiles += f.size;
-    if (f.size < 0 || totalFiles > CLIENT_MAX_BLOB) {
+    if (f.size < 0 || totalFiles > clientMaxUpload) {
       throw new Error("combined file size exceeds the share cap");
     }
   }

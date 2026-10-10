@@ -51,6 +51,35 @@ volumes:
 
 The app UI carries the same two blocks — footer → **self-host in 30 seconds**.
 
+### NixOS
+
+First-class: the repo ships a hardened NixOS module (`flake.nix` + `module.nix`, no external flake inputs). Run it with `nix develop` tooling or pull the flake into your system configuration:
+
+```nix
+# your flake.nix
+inputs.zeropaste.url = "github:2tap2b/zeropaste";
+
+# inside nixosConfigurations.<host>
+imports = [ inputs.zeropaste.nixosModules.zeropaste ];
+services.zeropaste = {
+  enable = true;
+  listenAddress = "127.0.0.1:8080"; # loopback default; your reverse proxy does TLS
+  # createKeyFile = ./create.key;    # file with a CREATE_KEY=<secret> line; secrets stay out of the store
+  # registrationOpen = false;        # lock passkey sign-ups
+};
+```
+
+Under the hood: `DynamicUser` with `StateDirectory=zeropaste` (`/var/lib/zeropaste` holds the 0600 JSON store), `Restart=on-failure`, and a tight systemd sandbox (NoNewPrivileges, ProtectSystem=strict, PrivateDevices, CapabilityBoundingSet empty, syscall filter). Env knobs beyond the module's options ride in through your own config — the service attrset merges:
+
+```nix
+systemd.services.zeropaste.environment = {
+  MAX_UPLOAD = "536870912"; # 512 MiB
+  MAX_TTL_DAYS = "14";
+};
+```
+
+The package derivation is a plain `buildGoModule` (`CGO_ENABLED=0`, stripped); `flake.packages.x86_64-linux.default` builds it standalone with `nix build github:2tap2b/zeropaste`.
+
 From source (Go 1.26+, matches go.mod):
 
 ```sh
@@ -73,7 +102,7 @@ Every value is optional; unset means the default. Set them via `environment:` in
 | `REG_OPEN` | `true` | static registration kill switch (useful after the first account; sign-ins always stay open). |
 | `MAX_TTL_DAYS` | `30` | share-time ceiling in days (1–366); enforced on text pastes and file bundles alike. |
 | `MAX_SHARES_PER_ACCOUNT` | `0` (unlimited) | cap on active shares per account; beyond it creations answer `403 share limit reached`. |
-| `MAX_BLOB` | `2147483648` (2 GiB) | total ciphertext per file bundle (1 MiB–64 GiB). |
+| `MAX_UPLOAD` | `104857600` (100 MiB) | total ciphertext per file bundle (1 MiB–64 GiB). The "maximum upload size" knob. |
 | `CHUNK` | `8388608` (8 MiB) | bytes per upload/range chunk (64 KiB–64 MiB). |
 | `SESSION_SECRET` | auto-generated | HMAC key for account session cookies; set it when the data dir does not persist it. |
 

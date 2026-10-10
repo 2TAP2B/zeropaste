@@ -156,10 +156,10 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "listen address")
 	flag.Parse()
 
-	maxBlobBytes = envBytes("MAX_BLOB", maxBlobBytes, 1<<20, 64<<30)
+	maxBlobBytes = envBytes("MAX_UPLOAD", 100<<20, 1<<20, 64<<30) // total ciphertext per share
 	chunkBytes = envBytes("CHUNK", chunkBytes, 64<<10, 64<<20)
 	if maxBlobBytes < chunkBytes {
-		log.Fatal("MAX_BLOB below CHUNK")
+		log.Fatal("MAX_UPLOAD below CHUNK")
 	}
 
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
@@ -242,7 +242,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 // the key or a hint of it.
 func gateStatus(key string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		respond(w, 200, map[string]any{"enabled": key != "", "maxTtlDays": maxTTL})
+		respond(w, 200, map[string]any{"enabled": key != "", "maxTtlDays": maxTTL, "maxUpload": maxBlobBytes})
 	}
 }
 
