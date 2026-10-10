@@ -17,6 +17,25 @@ let picked: File[] = [];
 const dropzone = $("dropzone") as HTMLElement;
 const fileinput = $("fileinput") as HTMLInputElement;
 
+// compose chip thumbnails: one object URL per picked image file,
+// revoked when the chip is removed or the paste is created
+const chipUrls = new Map<File, string>();
+function fileThumb(f: File): string {
+  let u = chipUrls.get(f);
+  if (!u) {
+    u = URL.createObjectURL(f);
+    chipUrls.set(f, u);
+  }
+  return u;
+}
+function dropThumb(f: File): void {
+  const u = chipUrls.get(f);
+  if (u) {
+    URL.revokeObjectURL(u);
+    chipUrls.delete(f);
+  }
+}
+
 function addFiles(list: FileList | File[]): void {
   const incoming = Array.from(list).filter((f) => f.size >= 0);
   for (const f of incoming) if (!picked.some((k) => k === f)) picked.push(f);
@@ -29,7 +48,15 @@ function renderChips(): void {
   for (const f of picked) {
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.textContent = f.name;
+    if (/^image\//.test(f.type)) {
+      const thumb = document.createElement("img");
+      thumb.className = "chipimg";
+      thumb.alt = "";
+      thumb.src = fileThumb(f);
+      chip.append(thumb);
+    }
+    const label = document.createElement("span");
+    label.textContent = f.name;
     const size = document.createElement("span");
     size.className = "chipsz";
     size.textContent = humanSize(f.size);
@@ -38,10 +65,11 @@ function renderChips(): void {
     x.setAttribute("aria-label", "Remove " + f.name);
     x.textContent = "×";
     x.addEventListener("click", () => {
+      dropThumb(f);
       picked = picked.filter((k) => k !== f);
       renderChips();
     });
-    chip.append(size, x);
+    chip.append(label, size, x);
     box.append(chip);
   }
   box.classList.toggle("hidden", picked.length === 0);
@@ -65,6 +93,28 @@ dropzone.addEventListener("drop", (e) => {
   e.preventDefault();
   dropzone.classList.remove("drag");
   if (e.dataTransfer?.files.length) addFiles(e.dataTransfer.files);
+});
+
+// clipboard paste: an image on the clipboard attaches into the upload section.
+// File copies from a file manager may only carry a URI (sandbox blocks reading
+// those); anything that arrives as an image/* item is picked up.
+document.addEventListener("paste", (e) => {
+  if (($("compose") as HTMLElement).classList.contains("hidden")) return;
+  const items = e.clipboardData?.items;
+  const files: File[] = [];
+  for (let i = 0; items && i < items.length; i++) {
+    const it = items[i];
+    if (!it || it.kind !== "file") continue;
+    const f = it.getAsFile();
+    if (f && /^image\//.test(f.type)) files.push(f);
+  }
+  if (!files.length) return; // plain-text paste keeps default behavior
+  e.preventDefault();
+  addFiles(files);
+  // visible feedback: scroll to the dropzone and pulse its border
+  dropzone.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  dropzone.classList.add("drag");
+  setTimeout(() => dropzone.classList.remove("drag"), 600);
 });
 
 // submit enabled iff there is something to share
@@ -157,6 +207,7 @@ $("create").addEventListener("click", async () => {
     ($("passnote") as HTMLElement).classList.toggle("hidden", !out.pass);
     drawQR(link);
     $("composeerr").classList.add("hidden");
+    for (const f of picked) dropThumb(f); // chips are gone; free their previews
     picked = [];
     renderChips();
     show("linkbox");

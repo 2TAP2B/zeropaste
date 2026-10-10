@@ -1,9 +1,29 @@
 import { $ } from "./dom";
 import { deriveKey, open_, bytesFromB64u, AesKey } from "./crypto";
-import { show } from "./ui";
+import { show, copy, humanSize } from "./ui";
 import { readManifest, parseEnvHead, MANIFEST_HEAD, ENV_TAG, Manifest } from "./bundle";
 import { openBytes } from "./crypto";
-import { humanSize } from "./ui";
+
+// copy icon rides on the code block; wired once at import (read view only)
+$("copytext").addEventListener("click", () =>
+  void copy($("pasteview").textContent ?? "", $("copytext")),
+);
+
+// image lightbox: one native <dialog>; ESC, ✕ and backdrop click close it
+const imgbox = $("imgbox") as HTMLDialogElement;
+$("imgboxx").addEventListener("click", () => imgbox.close());
+imgbox.addEventListener("click", (e) => {
+  if (e.target === imgbox) imgbox.close(); // ::backdrop clicks hit the dialog itself
+});
+imgbox.addEventListener("close", () => {
+  // empty string would resolve to the page URL and fetch it as an image
+  ($("imgboximg") as HTMLImageElement).removeAttribute("src");
+});
+
+function openLightbox(url: string): void {
+  ($("imgboximg") as HTMLImageElement).src = url;
+  imgbox.showModal();
+}
 
 interface PasteBody {
   data: string;
@@ -39,33 +59,28 @@ async function fetchPaste(): Promise<PasteRec> {
   return { ...body, id: m[1] };
 }
 
-interface PasteBody {
-  data: string;
-  salt?: string;
-  hl?: boolean;
-  burn: boolean;
-  len?: number;
-  expires?: number;
-}
-
 interface PasteRec extends PasteBody {
   id: string;
+}
+
+// header chips + burn side-effect, shared by text pastes and bundles;
+// runs after successful decryption only (burn DELETE must not fire on failed reads)
+function setReadMeta(paste: PasteRec, title: string): void {
+  $("readtitle").textContent = title;
+  if (paste.burn) {
+    $("burnnote").textContent = "burn after reading";
+    fetch(`/api/paste/${paste.id}`, { method: "DELETE" }).catch(() => {});
+  } else {
+    $("burnnote").textContent = "";
+  }
+  $("expiresnote").textContent =
+    paste.burn || !paste.expires ? "" : expiresIn(paste.expires);
 }
 
 function renderPaste(paste: PasteRec, text: string): void {
   $("pasteview").textContent = text;
   if (paste.hl && window.hljs) hljs?.highlightElement($("pasteview"));
-  ($("expiresnote") as HTMLElement).textContent = paste.burn
-    ? ""
-    : paste.expires
-      ? expiresIn(paste.expires)
-      : "";
-  if (paste.burn) {
-    ($("burnnote") as HTMLElement).textContent = "This paste was burned - the link is now dead.";
-    fetch(`/api/paste/${paste.id}`, { method: "DELETE" }).catch(() => {});
-  } else {
-    ($("burnnote") as HTMLElement).textContent = "";
-  }
+  setReadMeta(paste, "encrypted paste");
   $("unlock").classList.add("hidden");
   $("readbody").classList.remove("hidden");
 }
@@ -119,31 +134,22 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
   }
   // link validated: bundles burn via this DELETE after the envelope opens
   // note renders through the existing paste-view code block (copy icon rides along)
-  ($("pasteview") as HTMLElement).textContent = manifest.note ?? "";
-  ($("expiresnote") as HTMLElement).textContent = paste.burn
-    ? ""
-    : paste.expires
-      ? expiresIn(paste.expires)
-      : "";
-  if (paste.burn) {
-    ($("burnnote") as HTMLElement).textContent = "This paste was burned - the link is now dead.";
-    fetch(`/api/paste/${paste.id}`, { method: "DELETE" }).catch(() => {});
-  } else {
-    ($("burnnote") as HTMLElement).textContent = "";
-  }
+  const note = manifest.note ?? "";
+  ($("pasteview") as HTMLElement).textContent = note;
+  ($("codewrap") as HTMLElement).classList.toggle("hidden", !note);
+  const n = manifest.files.length;
+  setReadMeta(paste, n === 1 ? "encrypted bundle · 1 file" : `encrypted bundle · ${n} files`);
 
   const list = $("filelist") as HTMLElement;
   list.textContent = "";
   let off = 16 + mlen;
   for (const f of manifest.files) {
     const start = off; // captured per row before we advance
-    const row = document.createElement("div");
-    row.className = "filerow";
     const name = document.createElement("span");
-    name.className = "filedata";
+    name.className = "filedata name";
     name.textContent = f.name;
     const size = document.createElement("span");
-    size.className = "filedata";
+    size.className = "filedata fsize";
     size.textContent = humanSize(f.size);
     const save = document.createElement("button");
     save.type = "button";
@@ -170,19 +176,44 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
         save.disabled = false;
       }
     });
-    row.append(name, size, save);
-    // image preview: jpg/png/gif/webp under 5 MiB decrypt eagerly
-    if (/^image\/(jpeg|png|gif|webp)$/.test(f.mime) && f.size <= 5 << 20) {
+
+    // image attachments: media card with inline preview, click opens the lightbox
+    const eager = /^image\/(jpeg|png|gif|webp)$/.test(f.mime) && f.size <= 5 << 20;
+    const foot = document.createElement("div");
+    foot.className = "filefoot";
+    foot.append(name, size, save);
+    const row = document.createElement("div");
+    if (eager) {
+      row.className = "filecard";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "previewopen";
+      open.setAttribute("aria-label", "Open " + f.name + " larger");
+      const img = document.createElement("img");
+      img.className = "preview";
+      img.alt = f.name;
+      img.addEventListener("load", () => {
+        // only clickable once the browser actually decoded it
+        open.addEventListener("click", () => openLightbox(img.src));
+      }, { once: true });
+      img.onerror = () => {
+        open.hidden = true; // undecodable blob: keep the file row working
+        row.classList.add("filecard-flat");
+      };
       void fetchRangeExact(paste, start, f.size)
         .then((data) => openBytes(key, bytesFromB64u(f.iv), data))
         .then((full) => {
-          const img = document.createElement("img");
-          img.className = "preview";
-          img.alt = f.name;
           img.src = URL.createObjectURL(new Blob([full], { type: f.mime }));
-          row.prepend(img);
+          open.append(img);
+          row.append(open, foot);
         })
-        .catch(() => {}); // preview is decorative; Save still works
+        .catch(() => {
+          open.hidden = true; // preview is decorative; Save still works
+          row.append(foot);
+        });
+    } else {
+      row.className = "filerow";
+      row.append(name, size, save);
     }
     list.append(row);
     off += f.size;
@@ -196,8 +227,8 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
 function fail(msg: string): void {
   ($("readbody") as HTMLElement).classList.add("hidden");
   $("unlock").classList.add("hidden");
-  const err = $("readerr");
-  err.classList.remove("hidden");
+  ($("readerrmsg") as HTMLElement).textContent = msg;
+  $("readerr").classList.remove("hidden");
 }
 
 export async function readView(): Promise<void> {
