@@ -48,7 +48,8 @@ var indexHTML []byte
 var assetFS embed.FS
 
 // parseTTL accepts free-form burn times: "10m", "10 min", "6h", "1d", "30 days".
-// Ceiling: 30 days — this is a scratch box, not an archive.
+// Shape only; the range check (1 minute .. MAX_TTL_DAYS) happens at the call
+// site so operators can tune the ceiling via env.
 func parseTTL(s string) (time.Duration, bool) {
 	s = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(s), " ", ""))
 	if s == "" {
@@ -98,6 +99,56 @@ func envBytes(name string, def, min, max int64) int64 {
 		log.Fatalf("%s: bad value %q (want %d..%d bytes)", name, v, min, max)
 	}
 	return n
+}
+
+// Env-parsed feature switches; defaults keep today's behavior.
+// USER_ACCOUNTS=false   → the identity subsystem is off entirely (no
+//
+//	registration, sign-in, dashboard rows; client hides
+//	the account UI). /api/me always answers with the flag.
+//
+// USER_REGISTRATION=false → first-user bootstrap: registration works until one
+//
+//	identity exists, then closes like REG_OPEN=false.
+//
+// MAX_TTL_DAYS           → parseTTL ceiling in days (default 30).
+// MAX_SHARES_PER_ACCOUNT → active share rows per identity, 0 = unlimited.
+var (
+	accountsOn   bool
+	regFirstOnly bool
+	maxTTL       int64 // days
+	maxShares    int64
+)
+
+func envBool(name string, def bool) bool {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		log.Fatalf("%s: %q invalid, want true/false", name, v)
+	}
+	return b
+}
+
+func envInt(name string, def, min, max int64) int64 {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < min || n > max {
+		log.Fatalf("%s: bad value %q (want %d..%d)", name, v, min, max)
+	}
+	return n
+}
+
+func init() {
+	accountsOn = envBool("USER_ACCOUNTS", true)
+	regFirstOnly = !envBool("USER_REGISTRATION", true)
+	maxTTL = envInt("MAX_TTL_DAYS", 30, 1, 366)
+	maxShares = envInt("MAX_SHARES_PER_ACCOUNT", 0, 0, 100000)
 }
 
 func main() {
@@ -165,15 +216,19 @@ func build(dir, createKey string) http.Handler {
 	mux.Handle("DELETE /api/uploads/{id}", secure(hf(uploadAbort(dir))))
 	mux.Handle("POST /api/uploads/{id}/finish", secure(rl.guard(authGate(createKey, hf(uploadFinish(dir, owns))))))
 	mux.Handle("GET /assets/", secure(assets()))
-	// phase-2 identity (passkeys) + active-share dashboard
+	// phase-2 identity (passkeys) + active-share dashboard. USER_ACCOUNTS=false
+	// drops the ceremony routes entirely (404 for any client that still calls
+	// them) while /api/me stays up to carry the accounts=false flag.
 	mux.Handle("GET /api/me", secure(hf(me(sess))))
-	mux.Handle("POST /api/identity/register/begin", secure(rl.guard(hf(sess.registerBegin(cer)))))
-	mux.Handle("POST /api/identity/register/finish", secure(rl.guard(hf(sess.registerFinish(cer, owns)))))
-	mux.Handle("POST /api/identity/login/begin", secure(rl.guard(hf(sess.loginBegin(cer)))))
-	mux.Handle("POST /api/identity/login/finish", secure(rl.guard(hf(sess.loginFinish(cer)))))
-	mux.Handle("POST /api/identity/logout", secure(hf(sess.logout())))
-	mux.Handle("GET /api/shares", secure(hf(owns.list())))
-	mux.Handle("POST /api/identity/name", secure(rl.guard(hf(sess.identityName()))))
+	if accountsOn {
+		mux.Handle("POST /api/identity/register/begin", secure(rl.guard(hf(sess.registerBegin(cer)))))
+		mux.Handle("POST /api/identity/register/finish", secure(rl.guard(hf(sess.registerFinish(cer, owns)))))
+		mux.Handle("POST /api/identity/login/begin", secure(rl.guard(hf(sess.loginBegin(cer)))))
+		mux.Handle("POST /api/identity/login/finish", secure(rl.guard(hf(sess.loginFinish(cer)))))
+		mux.Handle("POST /api/identity/logout", secure(hf(sess.logout())))
+		mux.Handle("POST /api/identity/name", secure(rl.guard(hf(sess.identityName()))))
+		mux.Handle("GET /api/shares", secure(hf(owns.list())))
+	}
 	mux.Handle("GET /dash", secure(hf(serveIndex))) // dashboard SPA route
 	return mux
 }
@@ -187,7 +242,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 // the key or a hint of it.
 func gateStatus(key string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		respond(w, 200, map[string]bool{"enabled": key != ""})
+		respond(w, 200, map[string]any{"enabled": key != "", "maxTtlDays": maxTTL})
 	}
 }
 
@@ -330,11 +385,15 @@ func create(dir string, owns *shareIndex) http.HandlerFunc {
 		}
 		ttl, ok := parseTTL(req.TTL)
 		if !ok {
-			httpError(w, 400, "ttl must be a burn time like 10m, 6h or 1d (1 minute to 30 days)")
+			httpError(w, 400, fmt.Sprintf("ttl must be a burn time like 10m, 6h or 1d (1 minute to %d days)", maxTTL))
 			return
 		}
-		if ttl < time.Minute || ttl > 30*24*time.Hour {
-			httpError(w, 400, "ttl must be between 1 minute and 30 days")
+		if ttl < time.Minute || ttl > time.Duration(maxTTL)*24*time.Hour {
+			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", maxTTL))
+			return
+		}
+		if !owns.mayCreate(r) {
+			httpError(w, 403, "share limit reached for this account")
 			return
 		}
 		raw, err := base64.RawURLEncoding.DecodeString(req.Data)
@@ -536,7 +595,7 @@ func uploadInit(dir string) http.HandlerFunc {
 			return
 		}
 		if _, ok := parseTTL(req.TTL); !ok {
-			httpError(w, 400, "ttl must be a burn time like 10m, 6h or 1d (1 minute to 30 days)")
+			httpError(w, 400, fmt.Sprintf("ttl must be a burn time like 10m, 6h or 1d (1 minute to %d days)", maxTTL))
 			return
 		}
 		if req.Salt != "" {
@@ -707,6 +766,17 @@ func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
 			return
 		}
 		ttl, _ := parseTTL(u.TTL)
+		if ttl < time.Minute || ttl > time.Duration(maxTTL)*24*time.Hour {
+			// the init only shape-checks ttl; the ceiling applies at finish too
+			// or a crafted manifest could set year-long expiry
+			os.Remove(filepath.Join(dir, id+".blob"))
+			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", maxTTL))
+			return
+		}
+		if !owns.mayCreate(r) {
+			httpError(w, 403, "share limit reached for this account")
+			return
+		}
 		pb, _ := json.Marshal(paste{Len: u.Len, Salt: u.Salt, Burn: u.Burn, Expires: time.Now().Add(ttl).Unix()})
 		if err := os.WriteFile(filepath.Join(dir, id+".json"), pb, 0o600); err != nil {
 			os.Remove(filepath.Join(dir, id+".blob"))
@@ -972,16 +1042,17 @@ func (s *sessions) issue(w http.ResponseWriter, r *http.Request, id string) {
 
 func me(s *sessions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		n := s.identCount() // number of identities on the box
 		i := s.identFrom(r)
 		if i == nil {
-			respond(w, 200, map[string]any{"name": "", "open": registrationOpen(), "passkeys": []string{}})
+			respond(w, 200, map[string]any{"name": "", "accounts": accountsOn, "open": registrationOpen(n), "passkeys": []string{}})
 			return
 		}
 		ids := make([]string, 0, len(i.Creds))
 		for _, c := range i.Creds {
 			ids = append(ids, base64.RawURLEncoding.EncodeToString(c.ID))
 		}
-		respond(w, 200, map[string]any{"name": i.Name, "id": i.ID, "open": registrationOpen(), "passkeys": ids})
+		respond(w, 200, map[string]any{"name": i.Name, "id": i.ID, "accounts": accountsOn, "open": registrationOpen(n), "passkeys": ids})
 	}
 }
 
@@ -1121,7 +1192,8 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 		Name string `json:"name"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !registrationOpen() && s.identFrom(r) == nil {
+		n := s.identCount()
+		if !registrationOpen(n) && s.identFrom(r) == nil {
 			httpError(w, 403, "passkey registration is closed on this instance")
 			return
 		}
@@ -1163,6 +1235,13 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 
 func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// same gate as begin: a ceremony window (2 min) must not outlive a
+		// registration switch flip mid-enrollment
+		n := s.identCount()
+		if !registrationOpen(n) && s.identFrom(r) == nil {
+			httpError(w, 403, "passkey registration is closed on this instance")
+			return
+		}
 		body, sid, ok := readCeremonyBody(w, r)
 		if !ok {
 			return
@@ -1349,6 +1428,36 @@ func (si *shareIndex) idents(suite string) string {
 	return filepath.Join(si.dir, "shares", suite)
 }
 
+// mayCreate guards MAX_SHARES_PER_ACCOUNT (0 = unlimited): true when the
+// request is anonymous or the identity is under the active-row cap.
+func (si *shareIndex) mayCreate(r *http.Request) bool {
+	if maxShares <= 0 {
+		return true
+	}
+	i := si.sess.identFrom(r)
+	if i == nil {
+		return true
+	}
+	ents, err := os.ReadDir(si.idents(i.ID))
+	if err != nil {
+		return false // unreadable dir: be strict for a capped account
+	}
+	now := time.Now().Unix()
+	active := 0
+	for _, e := range ents {
+		b, err := os.ReadFile(filepath.Join(si.dir, strings.TrimSuffix(e.Name(), ".json")+".json"))
+		if err != nil {
+			continue
+		}
+		var p paste
+		if json.Unmarshal(b, &p) != nil || p.Expires < now {
+			continue // expired or corrupt rows do not count
+		}
+		active++
+	}
+	return active < int(maxShares)
+}
+
 // attach after a fresh registration makes previously created anon impossible;
 // rows only accrue from creation while logged in.
 func (si *shareIndex) attach(identID string) {}
@@ -1403,19 +1512,43 @@ func (si *shareIndex) list() http.HandlerFunc {
 	}
 }
 
-// registrationOpen: server-wide switch for NEW identity registrations
-// (REG_OPEN env; default true). Subjects with an existing session can always
-// attach more passkeys - closing registration only locks fresh accounts.
-func registrationOpen() bool {
-	v := strings.TrimSpace(os.Getenv("REG_OPEN"))
-	if v == "" {
-		return true
+// registrationOpen: whether a FRESH identity may be registered right now.
+// USER_ACCOUNTS=false (accountsOn) kills the whole feature; REG_OPEN=false
+// always closes; USER_REGISTRATION=false (regFirstOnly) closes once an
+// identity exists — the first user bootstraps, then the door shuts. Existing
+// sessions can always attach more passkeys; fresh accounts cannot.
+func registrationOpen(identCount int) bool {
+	if !accountsOn {
+		return false
 	}
-	b, err := strconv.ParseBool(v)
+	if v := strings.TrimSpace(os.Getenv("REG_OPEN")); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			log.Fatalf("REG_OPEN: %q invalid, want true/false", v)
+		}
+		if !b {
+			return false
+		}
+	}
+	if regFirstOnly && identCount > 0 {
+		return false
+	}
+	return true
+}
+
+// identCount: number of stored identity files (small friend-group store).
+func (s *sessions) identCount() int {
+	ents, err := os.ReadDir(filepath.Join(s.dir, "identities"))
 	if err != nil {
-		log.Fatalf("REG_OPEN: %q invalid, want true/false", v)
+		return 0
 	}
-	return b
+	n := 0
+	for _, e := range ents {
+		if strings.HasSuffix(e.Name(), ".json") {
+			n++
+		}
+	}
+	return n
 }
 
 // identityName: signed-in display-name edit (dashboard section).

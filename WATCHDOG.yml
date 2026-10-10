@@ -1,0 +1,3 @@
+advisors:
+  - name: glm advisor
+    model: opencode-go/glm-5.3-flash

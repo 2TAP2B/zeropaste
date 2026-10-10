@@ -242,11 +242,16 @@ function enterCompose(): void {
   ($("text") as HTMLTextAreaElement).focus(); // compose is no longer autofocus: keeps /dash and /p from stealing focus
 }
 
+// instance-wide TTL ceiling arrives via /api/gate; shown on the compose label
+// while the server remains the authority (400 beyond the ceiling)
 async function gateFlow(): Promise<void> {
   initTheme();
   try {
-    const { enabled } = (await (await fetch("/api/gate")).json()) as { enabled: boolean };
-    if (!enabled) return enterCompose();
+    const cfg = (await (await fetch("/api/gate")).json()) as { enabled: boolean; maxTtlDays?: number };
+    if (cfg.maxTtlDays && cfg.maxTtlDays !== 30) {
+      $("ttllabel").textContent = "burn paste after (max " + cfg.maxTtlDays + "d)";
+    }
+    if (!cfg.enabled) return enterCompose();
     const stored = siteKey.get();
     const unlock = async (key: string): Promise<void> => {
       const res = await fetch("/api/gate", { method: "POST", headers: { Authorization: "Bearer " + key } });

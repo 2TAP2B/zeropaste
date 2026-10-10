@@ -8,9 +8,9 @@
 <meta property="og:description" content="share secrets, not plaintext — zero-knowledge pastes, encrypted in your browser">
 <meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.5" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.5" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.7.5">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.6" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.6" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.7.6">
 </head>
 <body>
 <main>
@@ -73,7 +73,7 @@
     </div>
     <div class="row burnrow">
       <div class="field">
-        <label class="field-label" for="ttl">burn paste after</label>
+        <label class="field-label" for="ttl" id="ttllabel">burn paste after</label>
         <input type="text" id="ttl" value="1d" aria-label="Burn time" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" placeholder='e.g. "10 min", "6h", "1d"'>
       </div>
       <button type="button" class="toggle" id="burn" aria-pressed="false">
@@ -168,7 +168,7 @@
     <div id="dashanon" class="unlockbox hidden">
       <svg class="lockring" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" ry="2"></rect><path d="M8 11V7a4 4 0 0 1 7.8-1.3"></path></svg>
       <b>your shares live here</b>
-      <p>Create an account or sign in with a passkey to see, copy and delete your active shares.</p>
+      <p id="dashanontext">Create an account or sign in with a passkey to see, copy and delete your active shares.</p>
       <button type="button" class="primary" id="dashlogin">Sign in with passkey</button>
     </div>
     <div class="dashedit hidden" id="dashedit">
@@ -228,6 +228,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.7.5"></script>
+<script src="/assets/app.js?v=0.7.6"></script>
 </body>
 </html>

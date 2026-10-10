@@ -675,6 +675,135 @@ func TestMeEndpoint(t *testing.T) {
 	}
 }
 
+func TestFeatureSwitches(t *testing.T) {
+	t.Run("accounts off", func(t *testing.T) {
+		old := accountsOn
+		accountsOn = false
+		t.Cleanup(func() { accountsOn = old })
+		h := build(t.TempDir(), "")
+
+		rec := get(h, "/api/me")
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"accounts":false`) {
+			t.Fatalf("accounts flag: got %d %s", rec.Code, rec.Body)
+		}
+		// the ceremony routes disappear: dropped POSTs hit the GET / catch-all
+		// and become 405 (method not allowed) — nothing identity-shaped answers
+		if rec := postTo(t, h, "/api/identity/register/begin", `{"name":"x"}`, ""); rec.Code != 405 {
+			t.Fatalf("register begin with accounts off: got %d, want 405", rec.Code)
+		}
+		if rec := postTo(t, h, "/api/identity/login/begin", "", ""); rec.Code != 405 {
+			t.Fatalf("login begin with accounts off: got %d, want 405", rec.Code)
+		}
+		if rec := postTo(t, h, "/api/identity/logout", "", ""); rec.Code != 405 {
+			t.Fatalf("logout with accounts off: got %d, want 405", rec.Code)
+		}
+	})
+
+	t.Run("max ttl days", func(t *testing.T) {
+		old := maxTTL
+		maxTTL = 7
+		t.Cleanup(func() { maxTTL = old })
+		h := build(t.TempDir(), "")
+
+		body := `{"data":"` + strings.Repeat("A", 40) + `","ttl":"8d"}`
+		if rec := postTo(t, h, "/api/paste", body, ""); rec.Code != 400 {
+			t.Fatalf("8d beyond 7d ceiling: got %d, want 400", rec.Code)
+		}
+		if rec := postTo(t, h, "/api/paste", `{"data":"`+strings.Repeat("A", 40)+`","ttl":"7d"}`, ""); rec.Code != 200 {
+			t.Fatalf("7d within ceiling: got %d %s", rec.Code, rec.Body)
+		}
+		// /api/gate carries the ceiling for the client label
+		rec := get(h, "/api/gate")
+		if !strings.Contains(rec.Body.String(), `"maxTtlDays":7`) {
+			t.Fatalf("gate payload: %s", rec.Body)
+		}
+	})
+
+	t.Run("first user only", func(t *testing.T) {
+		oldFirst, oldAlways := regFirstOnly, func() {}
+		_ = oldAlways
+		regFirstOnly = true
+		t.Cleanup(func() { regFirstOnly = oldFirst })
+		dir := t.TempDir()
+		h := build(dir, "")
+
+		// no identity yet: door open
+		if rec := postTo(t, h, "/api/identity/register/begin", `{"name":"first"}`, ""); rec.Code != 200 {
+			t.Fatalf("first-user bootstrap begin: got %d %s", rec.Code, rec.Body)
+		}
+		// one identity exists: door shut (seed directly, no ceremony needed)
+		idents := filepath.Join(dir, "identities")
+		if err := os.MkdirAll(idents, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(idents, "someone.json"), []byte(`{"id":"someone","name":"someone","creds":[]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if rec := postTo(t, h, "/api/identity/register/begin", `{"name":"late"}`, ""); rec.Code != 403 {
+			t.Fatalf("registration after first user: got %d, want 403", rec.Code)
+		}
+		// /api/me reports registration closed
+		if rec := get(h, "/api/me"); !strings.Contains(rec.Body.String(), `"open":false`) {
+			t.Fatalf("me open flag: %s", rec.Body)
+		}
+	})
+
+	t.Run("share cap", func(t *testing.T) {
+		old := maxShares
+		maxShares = 2
+		t.Cleanup(func() { maxShares = old })
+		dir := t.TempDir()
+		s := testSession(t, dir)
+		owns := newShareIndex(dir, s)
+		h := build(dir, "")
+		ident := t.TempDir() // reuse: make the ownership row live under the real ident id
+		_ = ident
+
+		// gadget: write the ownership rows the way record() would
+		id := func(ident string, pasteID string, days int64) {
+			t.Helper()
+			if err := os.MkdirAll(filepath.Join(dir, "shares", ident), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			rows := filepath.Join(dir, "shares", ident, pasteID+".json")
+			_ = os.WriteFile(rows, []byte(`{"created":0}`), 0o600)
+			pb := filepath.Join(dir, pasteID+".json")
+			_ = os.WriteFile(pb, []byte(fmt.Sprintf(`{"expires":%d}`, time.Now().Add(time.Duration(days)*24*time.Hour).Unix())), 0o600)
+		}
+		// what ident id does the test session carry?
+		cookie := sessionCookieFor(s)
+		req := httptest.NewRequest("GET", "/api/me", nil)
+		req.Header.Set("Cookie", cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var me struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &me); err != nil || me.ID == "" {
+			t.Fatalf("session ident: %s %s", err, rec.Body)
+		}
+		id(me.ID, "act1", 1)
+		if !owns.mayCreate(mustReq(cookie)) {
+			t.Fatal("one active below cap: create should be allowed")
+		}
+		id(me.ID, "act2", 1)
+		if owns.mayCreate(mustReq(cookie)) {
+			t.Fatal("two actives at cap: create should be refused")
+		}
+		id(me.ID, "act2", -1) // same row now expired -> under cap again
+		if !owns.mayCreate(mustReq(cookie)) {
+			t.Fatal("expired rows do not count: create allowed again")
+		}
+	})
+}
+
+// mustReq: a request carrying the given cookie, for mayCreate assertions.
+func mustReq(cookie string) *http.Request {
+	r := httptest.NewRequest("POST", "/", nil)
+	r.Header.Set("Cookie", cookie)
+	return r
+}
+
 func TestSharesRecordAndList(t *testing.T) {
 	dir := t.TempDir()
 	s := testSession(t, dir)

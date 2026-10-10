@@ -8,6 +8,7 @@ import { b64uFromBytes, bytesFromB64u } from "./crypto";
 interface MeRec {
   name?: string;
   id?: string;
+  accounts?: boolean; // false = this instance has USER_ACCOUNTS off
   open?: boolean;
   passkeys?: string[]; // credential ids of the signed-in identity
 }
@@ -78,6 +79,16 @@ export async function refreshMe(): Promise<void> {
     const poll = $("accpoll") as HTMLElement;
 
     signedIn = !!me.name;
+    // USER_ACCOUNTS=false: the whole identity feature is off — the account
+    // button and pane go away entirely (the /dash card adapts in loadDash)
+    const accountsOff = me.accounts === false;
+    ($("accbtn") as HTMLButtonElement).classList.toggle("hidden", accountsOff);
+    if (accountsOff) {
+      poll.textContent = "accounts are disabled on this instance";
+      reg.disabled = true;
+      login.disabled = true;
+      return; // the button is hidden; nothing else in the pane matters
+    }
     // IP hosts cannot hold passkeys: the browser needs a domain RP ID and the
     // server config rejects IPs, so 127.0.0.1 and LAN addresses get the hint
     const host = location.hostname;
@@ -367,12 +378,25 @@ function dashError(msg: string): void {
 async function loadDash(): Promise<void> {
   $("dasherr").classList.add("hidden");
   const me = (await (await fetch("/api/me")).json()) as MeRec;
+  const accountsOff = me.accounts === false;
   const anon = !me.name;
   $("dashhead").classList.toggle("hidden", anon);
   $("dashrows").classList.toggle("hidden", anon);
   $("dashanon").classList.toggle("hidden", !anon);
   $("dashedit").classList.toggle("hidden", anon);
-  if (anon) return; // sign-in card is up
+  if (anon) {
+    if (accountsOff) {
+      // no sign-in button, no invite: the instance runs anonymous-only
+      $("dashlogin").classList.add("hidden");
+      ($("dashanon").querySelector(":scope > b") as HTMLElement).textContent = "anonymous paste box";
+      $("dashanontext").textContent = "This instance runs anonymous-only - accounts are disabled. Every paste stands on its own link and expiry.";
+    } else {
+      $("dashlogin").classList.remove("hidden");
+      ($("dashanon").querySelector(":scope > b") as HTMLElement).textContent = "your shares live here";
+      $("dashanontext").textContent = "Create an account or sign in with a passkey to see, copy and delete your active shares.";
+    }
+    return; // sign-in card is up
+  }
 
   const nameBox = $("dashname") as HTMLInputElement;
   nameBox.value = me.name ?? "";
