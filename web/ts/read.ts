@@ -143,8 +143,14 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
   const list = $("filelist") as HTMLElement;
   list.textContent = "";
   let off = 16 + mlen;
+  // thumbnail block: every file's ciphertext first, then thumbs in manifest order
+  let toff = off;
+  for (const mf of manifest.files) toff += mf.size;
   for (const f of manifest.files) {
     const start = off; // captured per row before we advance
+    const t = f.thumb;
+    const thumbStart = t ? toff : 0;
+    if (t) toff += t.size;
     const name = document.createElement("span");
     name.className = "filedata name";
     name.textContent = f.name;
@@ -177,13 +183,15 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
       }
     });
 
-    // image attachments: media card with inline preview, click opens the lightbox
-    const eager = /^image\/(jpeg|png|gif|webp)$/.test(f.mime) && f.size <= 5 << 20;
+    // image attachments: media card with inline preview, click opens the
+    // lightbox; with a stored thumbnail the card stays small and the full
+    // image only decrypts when actually opened
+    const canEager = /^image\/(jpeg|png|gif|webp)$/.test(f.mime) && f.size <= 5 << 20;
     const foot = document.createElement("div");
     foot.className = "filefoot";
     foot.append(name, size, save);
     const row = document.createElement("div");
-    if (eager) {
+    if (t || canEager) {
       row.className = "filecard";
       const open = document.createElement("button");
       open.type = "button";
@@ -192,23 +200,47 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
       const img = document.createElement("img");
       img.className = "preview";
       img.alt = f.name;
+      // click is gated on load: an undecodable blob never opens a broken lightbox
       img.addEventListener("load", () => {
-        // only clickable once the browser actually decoded it
-        open.addEventListener("click", () => openLightbox(img.src));
+        if (!t) {
+          open.addEventListener("click", () => openLightbox(img.src));
+          return;
+        }
+        // thumbnail path: show the small version instantly, swap in the full
+        // decrypt when it lands (cached for re-opens)
+        let fullUrl: string | null = null;
+        const swap = (): void => {
+          const box = $("imgbox") as HTMLDialogElement;
+          if (box.open && fullUrl) ($("imgboximg") as HTMLImageElement).src = fullUrl;
+        };
+        open.addEventListener("click", () => {
+          if (fullUrl) return void openLightbox(fullUrl); // already decrypted
+          openLightbox(img.src); // thumb as instant placeholder
+          void fetchRangeExact(paste, start, f.size)
+            .then((d) => openBytes(key, bytesFromB64u(f.iv), d))
+            .then((full) => {
+              fullUrl = URL.createObjectURL(new Blob([full], { type: f.mime }));
+              swap();
+            })
+            .catch(() => {}); // lightbox keeps the thumb; Save still works
+        });
       }, { once: true });
       img.onerror = () => {
         open.hidden = true; // undecodable blob: keep the file row working
         row.classList.add("filecard-flat");
       };
-      void fetchRangeExact(paste, start, f.size)
-        .then((data) => openBytes(key, bytesFromB64u(f.iv), data))
+      const decode = t
+        ? fetchRangeExact(paste, thumbStart, t.size).then((d) => openBytes(key, bytesFromB64u(t.iv), d))
+        : fetchRangeExact(paste, start, f.size).then((d) => openBytes(key, bytesFromB64u(f.iv), d));
+      void decode
         .then((full) => {
-          img.src = URL.createObjectURL(new Blob([full], { type: f.mime }));
+          img.src = URL.createObjectURL(new Blob([full], { type: t ? "image/jpeg" : f.mime }));
           open.append(img);
           row.append(open, foot);
         })
         .catch(() => {
           open.hidden = true; // preview is decorative; Save still works
+          row.classList.add("filecard-flat");
           row.append(foot);
         });
     } else {
