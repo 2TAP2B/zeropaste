@@ -10,7 +10,7 @@ export function applyTheme(t: Theme): void {
     /* private mode: session-only */
   }
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  if (meta) meta.content = t === "light" ? "#a78bfa" : "#1c1917";
+  if (meta) meta.content = t === "light" ? "#f5f3f9" : "#1c1917";
   for (const el of [
     { id: "hljs-light", theme: "light" },
     { id: "hljs-dark", theme: "dark" },
