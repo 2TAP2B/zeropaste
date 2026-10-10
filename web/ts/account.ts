@@ -9,6 +9,7 @@ interface MeRec {
   name?: string;
   id?: string;
   open?: boolean;
+  passkeys?: string[]; // credential ids of the signed-in identity
 }
 
 interface ShareRow {
@@ -375,6 +376,34 @@ async function loadDash(): Promise<void> {
 
   const nameBox = $("dashname") as HTMLInputElement;
   nameBox.value = me.name ?? "";
+  const list = $("passkeylist") as HTMLElement;
+  list.textContent = "";
+  for (const id of me.passkeys ?? []) {
+    const row = document.createElement("div");
+    row.className = "passrow";
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg") as SVGSVGElement;
+    icon.setAttribute("viewBox", "0 0 24 24");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("aria-hidden", "true");
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", "M12 17v2M20 4a2 2 0 0 0-2 1.4L10.9 13a3 3 0 1 0 2.1 2.1L21 7.1A2 2 0 0 0 20 4");
+    p.setAttribute("stroke", "currentColor");
+    p.setAttribute("stroke-width", "2");
+    p.setAttribute("stroke-linecap", "round");
+    p.setAttribute("stroke-linejoin", "round");
+    icon.append(p);
+    const code = document.createElement("code");
+    code.textContent = id.length > 14 ? id.slice(0, 11) + "…" : id;
+    code.title = id;
+    row.append(icon, code);
+    list.append(row);
+  }
+  if ((me.passkeys ?? []).length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "hint";
+    empty.textContent = "No passkeys registered yet.";
+    list.append(empty);
+  }
   const rowsBox = $("dashrows") as HTMLElement;
   rowsBox.textContent = "";
   const res = await fetch("/api/shares");

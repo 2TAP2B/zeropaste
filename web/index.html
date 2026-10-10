@@ -8,9 +8,9 @@
 <meta property="og:description" content="share secrets, not plaintext — zero-knowledge pastes, encrypted in your browser">
 <meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.3" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.3" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.7.3">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.4" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.4" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.7.4">
 </head>
 <body>
 <main>
@@ -157,7 +157,12 @@
   <section id="dashroot" class="hidden">
     <div class="dashhead" id="dashhead">
       <b>your active shares</b>
-      <a class="dashbtn" href="/">new paste</a>
+      <div class="dashacts">
+        <a class="dashbtn" href="/">new paste</a>
+        <button type="button" class="dashiconbtn" id="dashlogout" aria-label="Log out" title="Log out">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+        </button>
+      </div>
     </div>
     <div id="dashrows" class="hidden"></div>
     <div id="dashanon" class="unlockbox hidden">
@@ -172,9 +177,10 @@
         <input type="text" id="dashname" maxlength="64" placeholder="display name" autocomplete="off">
         <button type="button" id="dashsave">Save name</button>
       </div>
-      <div class="accrow">
+      <div class="dashpass">
+        <b>passkeys</b>
+        <div id="passkeylist"></div>
         <button type="button" id="dashreg">Add passkey</button>
-        <button type="button" class="rowdel" id="dashlogout">Log out</button>
       </div>
     </div>
     <div id="dasherr" class="hint danger hidden"></div>
@@ -222,6 +228,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.7.3"></script>
+<script src="/assets/app.js?v=0.7.4"></script>
 </body>
 </html>

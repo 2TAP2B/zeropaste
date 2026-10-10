@@ -974,10 +974,14 @@ func me(s *sessions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		i := s.identFrom(r)
 		if i == nil {
-			respond(w, 200, map[string]any{"name": "", "open": registrationOpen()})
+			respond(w, 200, map[string]any{"name": "", "open": registrationOpen(), "passkeys": []string{}})
 			return
 		}
-		respond(w, 200, map[string]any{"name": i.Name, "id": i.ID, "open": registrationOpen()})
+		ids := make([]string, 0, len(i.Creds))
+		for _, c := range i.Creds {
+			ids = append(ids, base64.RawURLEncoding.EncodeToString(c.ID))
+		}
+		respond(w, 200, map[string]any{"name": i.Name, "id": i.ID, "open": registrationOpen(), "passkeys": ids})
 	}
 }
 

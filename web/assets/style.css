@@ -65,7 +65,8 @@
   #accpanel .accico { width: 1.25rem; height: 1.25rem; color: var(--accent); flex: 0 0 auto; }
   #accpanel .accstatus { margin-top: 0; }
   #accpanel #accpoll { display: block; margin-bottom: .75rem; color: var(--muted); }
-  #accpanel .accrow { display: flex; gap: .6rem; flex-wrap: wrap; margin: .5rem 0; }
+  /* shared by the dashboard identity rows too - scoped rules left them unspaced */
+  .accrow { display: flex; gap: .6rem; flex-wrap: wrap; margin: .5rem 0; }
   #accpanel .accname, #accpanel #accname { flex: 1 1 10rem; }
   #accpanel .hint { margin-top: .5rem; }
   .dashhead {
@@ -79,6 +80,12 @@
     border-radius: 6px; padding: .3rem .75rem;
   }
   .dashbtn:hover { background: var(--accent-h); border-color: var(--accent-h); }
+  .dashacts { display: flex; align-items: center; gap: .5rem; }
+  .dashiconbtn {
+    width: 2.1rem; height: 2.1rem; padding: .45rem; flex: 0 0 auto;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .dashiconbtn svg { width: 1.05rem; height: 1.05rem; }
   #dashrows { display: flex; flex-direction: column; gap: .4rem; }
   .srow {
     display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; row-gap: .35rem;
@@ -98,7 +105,21 @@
   .dashedit {
     margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .75rem;
   }
+  .dashpass {
+    margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .75rem;
+  }
+  .dashpass > b { display: block; margin-bottom: .5rem; color: var(--text); }
+  #passkeylist { display: flex; flex-direction: column; gap: .35rem; margin-bottom: .6rem; }
+  .passrow {
+    display: flex; align-items: center; gap: .55rem; font-size: .8rem; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: .4rem .6rem; max-width: 100%;
+  }
+  .passrow svg { width: .9rem; height: .9rem; color: var(--accent); flex: 0 0 auto; }
+  .passrow code { color: var(--muted); font-size: .72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dashedit b { color: var(--text); display: block; margin-bottom: .5rem; }
+  .dashedit .accrow { flex-wrap: nowrap; }
+  #dashname { flex: 1 1 auto; width: auto; min-width: 8rem; }
   .theme-toggle .sun { display: none; }
   :root[data-theme="light"] .theme-toggle .sun { display: block; }
   :root[data-theme="light"] .theme-toggle .moon { display: none; }
@@ -344,6 +365,9 @@
     .filesave { padding: .45rem .9rem; font-size: .8rem; }
     .previewopen img.preview { max-height: 240px; }
     #imgbox img { max-width: 84vw; }
+    .dashedit .accrow { flex-wrap: wrap; }
+    #dashname { width: 100%; flex: 1 1 100%; }
+    .dashacts { width: 100%; justify-content: flex-end; }
     .readerror { padding: 1.5rem .25rem; }
     /* header: brand alone on one line, controls right */
     .brand span { display: none; }
