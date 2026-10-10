@@ -8,9 +8,9 @@
 <meta property="og:description" content="share secrets, not plaintext — zero-knowledge pastes, encrypted in your browser">
 <meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.6" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.6" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.7.6">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.7" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.7" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.7.7">
 </head>
 <body>
 <main>
@@ -190,7 +190,7 @@
   <footer class="foot">
     <div>
       <b>zeropaste</b> — zero-knowledge pastes ·
-      <button type="button" class="foot-link" popovertarget="quickstart">self-host</button> ·
+      <button type="button" class="foot-link" popovertarget="quickstart">self-host in 30 seconds</button> ·
       <a href="https://github.com/2TAP2B/zeropaste" rel="noopener">source code</a>
     </div>
   </footer>
@@ -204,7 +204,7 @@
       </button>
       <pre><code id="qs-run">docker run -d --name zeropaste -p 8080:8080 -v paste-data:/data ghcr.io/2tap2b/zeropaste:latest</code></pre>
     </div>
-    <div class="qs-label">or compose.yaml</div>
+    <div class="qs-label">or compose.yaml — all knobs commented, paste the file and start</div>
     <div class="qs-block">
       <button type="button" class="copybtn" aria-label="Copy compose file" data-copy="qs-compose">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -214,11 +214,15 @@
     image: ghcr.io/2tap2b/zeropaste:latest
     ports:
       - "8080:8080"
-    environment:
-      CREATE_KEY: "change-me" # site passphrase for creating; delete line for fully public
     volumes:
       - paste-data:/data
     restart: unless-stopped
+    # environment:            # all optional; every line commented = fully
+    #   CREATE_KEY: "change-me"  # public instance (site passphrase for creates)
+    #   USER_ACCOUNTS: "true"    # "false" = no accounts at all
+    #   USER_REGISTRATION: "true" # "false" = sign-up closes after the first account
+    #   MAX_TTL_DAYS: "30"       # share-time ceiling in days
+    #   MAX_SHARES_PER_ACCOUNT: "0" # active shares per account; 0 = unlimited
 volumes:
   paste-data:</code></pre>
     </div>
@@ -228,6 +232,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.7.6"></script>
+<script src="/assets/app.js?v=0.7.7"></script>
 </body>
 </html>

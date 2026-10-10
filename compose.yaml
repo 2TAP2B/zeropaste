@@ -1,15 +1,23 @@
 # zeropaste - plain HTTP app; TLS termination is a reverse-proxy concern.
+# This file works as-is: a fully public instance. Every knob lives in the
+# environment block, commented, so nothing surprises on `docker compose up -d`.
 services:
   paste:
     image: ghcr.io/2tap2b/zeropaste:latest
     ports:
       - "8080:8080"
-    environment:
-      CREATE_KEY: "change-me" # create-gate passphrase; delete this line for a fully public instance
-      # REG_OPEN: "false"      # set to lock NEW passkey registrations; sign-ins stay open
     volumes:
       - paste-data:/data
     restart: unless-stopped
+    # environment:                 # all optional
+    #   CREATE_KEY: "change-me"       # site passphrase in front of creates
+    #   USER_ACCOUNTS: "true"         # "false" disables accounts entirely
+    #   USER_REGISTRATION: "true"     # "false": sign-up closes after the first account
+    #   MAX_TTL_DAYS: "30"            # share-time ceiling in days (1..366)
+    #   MAX_SHARES_PER_ACCOUNT: "0"   # active shares per account; 0 = unlimited
+    #   REG_OPEN: "false"             # static registration lock; sign-ins stay open
+    #   MAX_BLOB: "2147483648"        # bytes per share; default 2 GiB
+    #   CHUNK: "8388608"              # bytes per chunk; default 8 MiB
 
 volumes:
   paste-data:
