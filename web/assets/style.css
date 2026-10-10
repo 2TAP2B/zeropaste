@@ -58,7 +58,13 @@
     border-radius: 10px; padding: 1.25rem; margin: 0; font: inherit;
   }
   #accpanel::backdrop { background: rgb(0 0 0 / .55); }
-  #accpanel #accpoll { display: block; margin-bottom: .75rem; color: var(--accent); font-weight: 700; }
+  #accpanel .acchead {
+    display: flex; align-items: center; gap: .5rem; margin-bottom: .35rem;
+  }
+  #accpanel .acchead b { color: var(--text); font-weight: 700; }
+  #accpanel .accico { width: 1.25rem; height: 1.25rem; color: var(--accent); flex: 0 0 auto; }
+  #accpanel .accstatus { margin-top: 0; }
+  #accpanel #accpoll { display: block; margin-bottom: .75rem; color: var(--muted); }
   #accpanel .accrow { display: flex; gap: .6rem; flex-wrap: wrap; margin: .5rem 0; }
   #accpanel .accname, #accpanel #accname { flex: 1 1 10rem; }
   #accpanel .hint { margin-top: .5rem; }
@@ -67,6 +73,12 @@
     margin-bottom: .6rem;
   }
   .dashhead b { color: var(--text); }
+  .dashbtn {
+    display: inline-block; font-size: .75rem; font-weight: 600; text-decoration: none;
+    background: var(--accent); border: 1px solid var(--accent); color: var(--on-accent);
+    border-radius: 6px; padding: .3rem .75rem;
+  }
+  .dashbtn:hover { background: var(--accent-h); border-color: var(--accent-h); }
   #dashrows { display: flex; flex-direction: column; gap: .4rem; }
   .srow {
     display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; row-gap: .35rem;

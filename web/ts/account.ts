@@ -100,7 +100,7 @@ export async function refreshMe(): Promise<void> {
     reg.disabled = false;
     login.disabled = false;
     if (signedIn) {
-      poll.textContent = me.name ?? "";
+      poll.textContent = "Signed in as " + (me.name ?? "");
       reg.textContent = "Add another passkey";
       nameInput.classList.add("hidden");
       login.classList.add("hidden");
@@ -285,10 +285,10 @@ export async function bootAccount(): Promise<void> {
   $("regbtn").addEventListener("click", () => void registerStart());
   $("loginbtn").addEventListener("click", () => void loginStart());
   $("logoutbtn").addEventListener("click", () => void logout());
-  // the header button: signed-in users go to /dash (the dash itself opens the
-  // identity popover instead of reloading the same page)
+  // the header button: signed-in users land on /dash (this refreshes the row
+  // list); anonymous visitors get the identity popover
   $("accbtn").addEventListener("click", () => {
-    if (signedIn && !location.pathname.startsWith("/dash")) {
+    if (signedIn) {
       location.href = "/dash";
       return;
     }

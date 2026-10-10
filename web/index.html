@@ -8,9 +8,9 @@
 <meta property="og:description" content="share secrets, not plaintext — zero-knowledge pastes, encrypted in your browser">
 <meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.2" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.2" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.7.2">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.3" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.3" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.7.3">
 </head>
 <body>
 <main>
@@ -25,16 +25,20 @@
     </button>
   </header>
 
-  <!-- account lightbox: create account (passkey-only) + link to dashboard -->
+  <!-- account lightbox: passkey-only create/sign-in + dashboard link -->
   <div id="accpanel" popover>
-    <b id="accpoll">create account or sign in - passkey only</b>
+    <div class="acchead">
+      <svg class="accico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+      <b>your account</b>
+    </div>
+    <div id="accpoll" class="hint accstatus"></div>
     <div class="accrow" id="signactions">
       <a href="/dash" id="dashlink" class="hidden">Open dashboard</a>
       <button type="button" id="logoutbtn" class="hidden">Sign out</button>
     </div>
     <div class="accrow" id="createactions">
       <input type="text" id="accname" placeholder="a name for your passkeys" autocomplete="off">
-      <button type="button" id="regbtn">Create account</button>
+      <button type="button" class="primary" id="regbtn">Create account</button>
     </div>
     <div class="accrow" id="loginrow">
       <button type="button" id="loginbtn">Sign in with passkey</button>
@@ -153,7 +157,7 @@
   <section id="dashroot" class="hidden">
     <div class="dashhead" id="dashhead">
       <b>your active shares</b>
-      <a class="rowcopy" href="/">new paste</a>
+      <a class="dashbtn" href="/">new paste</a>
     </div>
     <div id="dashrows" class="hidden"></div>
     <div id="dashanon" class="unlockbox hidden">
@@ -167,6 +171,8 @@
       <div class="accrow">
         <input type="text" id="dashname" maxlength="64" placeholder="display name" autocomplete="off">
         <button type="button" id="dashsave">Save name</button>
+      </div>
+      <div class="accrow">
         <button type="button" id="dashreg">Add passkey</button>
         <button type="button" class="rowdel" id="dashlogout">Log out</button>
       </div>
@@ -216,6 +222,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.7.2"></script>
+<script src="/assets/app.js?v=0.7.3"></script>
 </body>
 </html>
