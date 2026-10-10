@@ -8,15 +8,15 @@ Instructions for agents working on this repository. If you rebuild this project 
 
 Hard constraints (do not violate, do not "improve"):
 
-- **Single Go binary.** Stdlib only — no web framework, no router lib, no DB driver, no third-party Go dependencies at all.
+- **Single Go binary.** One third-party Go module (go-webauthn for passkeys) — everything else is stdlib; no web framework, no router lib, no DB driver.
 - **Zero-knowledge.** Keys are generated and used exclusively in the browser (WebCrypto). The server never sees plaintext, keys, or passphrases. No CDN calls from the frontend; everything (including syntax highlighting) is embedded in the binary.
-- **No accounts, no cookies, no sessions, no per-request logging.** The link is the capability. This is intentional; do not add auth or logging of request data. (Exception: the optional create-gate below — a single site passphrase in front of `POST /api/paste` via env `CREATE_KEY`; it is not a user-account system.)
+- **Anonymous by default; optional passkey accounts.** Anonymous pastes keep the original link-is-the-capability design: no cookies, no sessions, no per-request logging. The shipped phase-2 identity system (passkeys) exists ONLY for the private active-shares dashboard: HMAC-signed `zp.session` cookie (HttpOnly, SameSite=Lax), identity names + public-key material in `data/identities/`, ownership rows in `data/shares/` — never paste content or keys. The whole subsystem can be disabled with `USER_ACCOUNTS=false` (see §5). (Exception: the optional create-gate below — a single site passphrase in front of `POST /api/paste` via env `CREATE_KEY`; it is not a user-account system.)
 - **English UI only.**
-- Allowed Go version: 1.25+ (built and verified on 1.26.x).
+- Allowed Go version: 1.26+ (go.mod directive `go 1.26.0`; built and verified on 1.26.x).
 
-Out of scope by design (an agent must not add these): authentication *beyond the optional create-gate* (no user accounts per se), paste editing or listing (except the phase-2 identity dashboard when approved), comments, per-language syntax selection, a database.
+Out of scope by design (an agent must not add these): paste editing, comments, per-language syntax selection, a database.
 
-**Spec revision v0.3 (user approved):** file uploads ARE in scope now (phase-1); passkey accounts + reverse shares planned (phases 2-3). The zero-knowledge crypto contract (§2) is untouched: the server only ever stores ciphertext.
+**Spec revision v0.3 (user approved):** file uploads ARE in scope now (phase-1); passkey accounts shipped with phase-2. The zero-knowledge crypto contract (§2) is untouched: the server only ever stores ciphertext.
 
 ## 2. Crypto contract (non-negotiable)
 
@@ -53,7 +53,7 @@ No other files belong here. `data/` (runtime store) is created on demand and mus
 
 Base: all routes carry security headers via `secure()` middleware. Errors are JSON `{"error": "<generic message>"}` — never internal details.
 
-**Hardening posture (audit trail, see the security-and-hardening skill):** validation at every boundary (ttl parse, length caps, strict base64url, `validID` charset = the sole path gate, `MaxBytesReader` everywhere); CSRF blocked by construction (state-changing endpoints require JSON/bearer content, cross-site preflight fails — no CORS headers are ever emitted); cookies HttpOnly+SameSite=Lax+`Secure` when the request is HTTPS (direct TLS or `X-Forwarded-Proto`) with bounded MaxAge; secrets only from env/`.session.key` (gitignored `data/`); no request logs, no IPs; retention = TTL janitor. Supply chain: `govulncheck ./...` runs in the release gate — GO-2026-5932 (x/crypto/openpgp, module-level only, not reachable, no fix published) is the documented standing deferral.
+**Hardening posture (audit trail, see the security-and-hardening skill):** validation at every boundary (ttl parse, length caps, strict base64url, `validID` charset = the sole path gate, `MaxBytesReader` everywhere); CSRF blocked by construction (state-changing endpoints require JSON/bearer content, cross-site preflight fails — no CORS headers are ever emitted); cookies HttpOnly+SameSite=Lax+`Secure` when the request is HTTPS (direct TLS or `X-Forwarded-Proto`) with bounded MaxAge; secrets only from env/`.session.key` (gitignored `data/`); no request logs, no IPs; retention = TTL janitor. Supply chain: `govulncheck ./...` runs in the release gate as the recorded audit — findings are triaged against reachability (GO-2026-5932, x/crypto/openpgp, is module-level only and not reachable).
 
 ### `POST /api/paste` (rate limited: 30/min/IP, then HTTP 429)
 
@@ -166,7 +166,7 @@ nix develop --command sh -c 'gofmt -l . && go vet ./... && go test ./... && esbu
 - Upload suite: `TestUploadRoundTrip` (odd-sized 3-chunk init/put/finish → meta `{len,...}` no `data` → paginated range reads equal the plaintext), `TestUploadResumeOverwrite` (PUT same chunk twice: latest wins), `TestUploadFinishMissingPart` (400 + parts survive + off-size chunk rejected; retry completes; double finish idempotent), `TestUploadAbortCleans` (chunk PUT after abort → 404, second abort idempotent), `TestUploadBadRequests` (len 0/-65 above cap/bad ttl/short salt → 400; chunk index out of range/junk/negative/bad-id charset → 4xx), `TestUploadSweep` (fresh session survives; `created` older than 2h → wiped), `TestBlobBurnExpiresOnRead` (meta read flips to grace window, blob stays reachable, expired+rereaped by janitor → both gone), `TestAuthGateUpload` (init + chunk PUTs: no header/wrong key → 401, correct key → 200/204; blobs/files publicly readable AFTER they exist).
 - Identity suite: `TestMeEndpoint` (anon `{name:""}`, signed-in `{name:"friend-of-tobias"}`), `TestSharesRecordAndList` (signed create records kind text row, anon records nothing, expired rows prune from listing AND ownership dir), `TestRegistrationClosed` (`REG_OPEN=false`: anon begin → 403, attach with session → options, me `open:false`). Browser-only parts (real ceremony, dashboard visuals) verify interactively or with the headless-harness screenshots.
 - Live smoke (expected results): request POST → GET returns `data`; burn paste second GET → 404; `31d` → 400; assets `200`; `/assets/` → 404; `curl -sI /` shows all four security headers.
-- Supply-chain audit: `nix shell nixpkgs#govulncheck nixpkgs#go -c sh -c 'CGO_ENABLED=0 govulncheck ./...'` → `No vulnerabilities found.` (There are no third-party Go deps; any `go.sum` is a regression.)
+- Supply-chain audit: `nix shell nixpkgs#govulncheck nixpkgs#go -c sh -c 'CGO_ENABLED=0 govulncheck ./...'` — findings are triaged against reachability and recorded; stdlib findings track the nixpkgs Go release. `go-webauthn` is the sole direct module (passkeys).
 
 ## 9. Docker
 
@@ -179,4 +179,4 @@ nix develop --command sh -c 'gofmt -l . && go vet ./... && go test ./... && esbu
 
 ## 10. When changing this project
 
-Preserve, in this order: the zero-knowledge crypto contract (§2), the stdlib-only constraint (§1), the security headers and validation order (§4–5), `textContent` rendering (§6). Deliberate simplifications stay marked with `// ponytail:` — do not silently "fix" them into complexity. Add a test for every abuse case before adding the mitigation.
+Preserve, in this order: the zero-knowledge crypto contract (§2), the single-binary + single-direct-dependency posture (§1), the security headers and validation order (§4–5), `textContent` rendering (§6). Deliberate simplifications stay marked with `// ponytail:` — do not silently "fix" them into complexity. Add a test for every abuse case before adding the mitigation.
