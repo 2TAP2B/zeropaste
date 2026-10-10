@@ -8,9 +8,9 @@
 <meta property="og:description" content="share secrets, not plaintext — zero-knowledge pastes, encrypted in your browser">
 <meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.1" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.1" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.7.1">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.2" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.2" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.7.2">
 </head>
 <body>
 <main>
@@ -41,14 +41,6 @@
     </div>
     <div id="accerr" class="hint danger hidden"></div>
     <div id="browserhint" class="hint hidden">Passkeys need HTTPS (or localhost). You are on an insecure origin - open the site over its real domain.</div>
-    <div id="dashview" class="hidden">
-      <div class="dashhead">
-        <b>your active shares</b>
-        <button type="button" id="refreshout">refresh</button>
-      </div>
-      <div id="sharelist"></div>
-      <div class="hint">Rows re-open using the key remembered in this browser. Clearing site data forgets them.</div>
-    </div>
   </div>
 
 <!-- site gate: full-screen pre-screen when CREATE_KEY is set -->
@@ -63,7 +55,7 @@
 
   <!-- compose -->
   <section id="compose" class="card">
-    <textarea id="text" placeholder="Type or paste anything — text, passwords, snippets…" spellcheck="false" autofocus></textarea>
+    <textarea id="text" placeholder="Type or paste anything — text, passwords, snippets…" spellcheck="false"></textarea>
     <div id="dropzone">
       <input type="file" id="fileinput" multiple class="hidden">
       <span>drop files here — or click to browse</span>
@@ -157,6 +149,32 @@
     <img id="imgboximg" alt="image preview">
   </dialog>
 
+  <!-- dashboard (/dash): the standard header/footer/popovers stay; cards swap here -->
+  <section id="dashroot" class="hidden">
+    <div class="dashhead" id="dashhead">
+      <b>your active shares</b>
+      <a class="rowcopy" href="/">new paste</a>
+    </div>
+    <div id="dashrows" class="hidden"></div>
+    <div id="dashanon" class="unlockbox hidden">
+      <svg class="lockring" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" ry="2"></rect><path d="M8 11V7a4 4 0 0 1 7.8-1.3"></path></svg>
+      <b>your shares live here</b>
+      <p>Create an account or sign in with a passkey to see, copy and delete your active shares.</p>
+      <button type="button" class="primary" id="dashlogin">Sign in with passkey</button>
+    </div>
+    <div class="dashedit hidden" id="dashedit">
+      <b>account</b>
+      <div class="accrow">
+        <input type="text" id="dashname" maxlength="64" placeholder="display name" autocomplete="off">
+        <button type="button" id="dashsave">Save name</button>
+        <button type="button" id="dashreg">Add passkey</button>
+        <button type="button" class="rowdel" id="dashlogout">Log out</button>
+      </div>
+    </div>
+    <div id="dasherr" class="hint danger hidden"></div>
+    <div class="hint">Links carry the decryption key in the fragment; the server cannot read any of them. Rows vanish when a share expires or burns.</div>
+  </section>
+
   <footer class="foot">
     <div>
       <b>zeropaste</b> — zero-knowledge pastes ·
@@ -198,6 +216,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.7.1"></script>
+<script src="/assets/app.js?v=0.7.2"></script>
 </body>
 </html>

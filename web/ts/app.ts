@@ -237,18 +237,23 @@ $("progcancel").addEventListener("click", () => {
 
 // gate screen: shown before the app when this instance has a create gate;
 // unlocking is verified against POST /api/gate, then kept per tab (sessionStorage).
+function enterCompose(): void {
+  show("compose");
+  ($("text") as HTMLTextAreaElement).focus(); // compose is no longer autofocus: keeps /dash and /p from stealing focus
+}
+
 async function gateFlow(): Promise<void> {
   initTheme();
   try {
     const { enabled } = (await (await fetch("/api/gate")).json()) as { enabled: boolean };
-    if (!enabled) return show("compose");
+    if (!enabled) return enterCompose();
     const stored = siteKey.get();
     const unlock = async (key: string): Promise<void> => {
       const res = await fetch("/api/gate", { method: "POST", headers: { Authorization: "Bearer " + key } });
       if (res.status === 204) {
         siteKey.set(key);
         ($("create") as HTMLButtonElement).disabled = false;
-        show("compose");
+        enterCompose();
         return;
       }
       siteKey.clear();
@@ -265,7 +270,7 @@ async function gateFlow(): Promise<void> {
     });
     if (stored) {
       const res = await fetch("/api/gate", { method: "POST", headers: { Authorization: "Bearer " + stored } });
-      if (res.status === 204) return show("compose");
+      if (res.status === 204) return enterCompose();
       const err = $("gateerr");
       err.textContent = "Wrong passphrase.";
       err.classList.remove("hidden");
@@ -276,7 +281,7 @@ async function gateFlow(): Promise<void> {
     }
     return show("gate");
   } catch {
-    return show("compose"); // server unreachable; let the submit path handle errors
+    return enterCompose(); // server unreachable; let the submit path handle errors
   }
 }
 
@@ -310,6 +315,7 @@ if (location.search.includes("selfcheck")) {
 } else if (location.pathname === "/dash") {
   initTheme();
   void dashboardPage();
+  void bootAccount(); // same header: theme toggle + account button work here
 } else if (location.pathname.startsWith("/p/")) {
   initTheme();
   readView();

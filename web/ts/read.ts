@@ -209,10 +209,6 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
         // thumbnail path: show the small version instantly, swap in the full
         // decrypt when it lands (cached for re-opens)
         let fullUrl: string | null = null;
-        const swap = (): void => {
-          const box = $("imgbox") as HTMLDialogElement;
-          if (box.open && fullUrl) ($("imgboximg") as HTMLImageElement).src = fullUrl;
-        };
         open.addEventListener("click", () => {
           if (fullUrl) return void openLightbox(fullUrl); // already decrypted
           openLightbox(img.src); // thumb as instant placeholder
@@ -220,7 +216,8 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
             .then((d) => openBytes(key, bytesFromB64u(f.iv), d))
             .then((full) => {
               fullUrl = URL.createObjectURL(new Blob([full], { type: f.mime }));
-              swap();
+              const box = $("imgbox") as HTMLDialogElement;
+              if (box.open) ($("imgboximg") as HTMLImageElement).src = fullUrl; // closed meanwhile: cached for the next open
             })
             .catch(() => {}); // lightbox keeps the thumb; Save still works
         });

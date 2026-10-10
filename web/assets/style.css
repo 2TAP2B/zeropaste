@@ -62,13 +62,14 @@
   #accpanel .accrow { display: flex; gap: .6rem; flex-wrap: wrap; margin: .5rem 0; }
   #accpanel .accname, #accpanel #accname { flex: 1 1 10rem; }
   #accpanel .hint { margin-top: .5rem; }
-  #dashview { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .75rem; }
-  .dashhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: .6rem; }
+  .dashhead {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: .6rem;
+  }
   .dashhead b { color: var(--text); }
-  #refreshout { font-size: .75rem; padding: .3rem .7rem; }
-  #sharelist { display: flex; flex-direction: column; gap: .4rem; }
+  #dashrows { display: flex; flex-direction: column; gap: .4rem; }
   .srow {
-    display: flex; align-items: center; gap: .75rem;
+    display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; row-gap: .35rem;
     background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
     padding: .45rem .7rem; font-size: .85rem;
   }
@@ -78,7 +79,10 @@
   .swhen { color: var(--muted); font-size: .75rem; white-space: nowrap; }
   .susers { color: var(--muted); font-size: .75rem; white-space: nowrap; }
   .rowcopy { font-size: .75rem; padding: .3rem .65rem; flex: 0 0 auto; }
-  .dashtitle { font-size: 1rem; color: var(--accent); margin-bottom: .75rem; letter-spacing: .05em; }
+  .rowdel {
+    font-size: .75rem; padding: .3rem .65rem; flex: 0 0 auto; color: var(--muted);
+  }
+  .rowdel:hover { color: var(--danger); border-color: var(--danger); }
   .dashedit {
     margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .75rem;
   }

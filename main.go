@@ -1075,9 +1075,21 @@ func rpFromRequest(r *http.Request) *webauthn.WebAuthn {
 		RPOrigins:     []string{"https://" + host, "http://" + host},
 	})
 	if err != nil {
+		// the lib rejects IP-literal RP IDs ("not a domain"); surface why in the log
+		log.Print("webauthn config rejected for host ", host, ": ", err)
 		return nil
 	}
 	return w
+}
+
+// isIPHost reports whether the request host is an IP literal. Passkeys need a
+// domain RP ID; the go-webauthn config rejects IP addresses outright.
+func isIPHost(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	return net.ParseIP(host) != nil
 }
 
 // readCeremonyBody reads the whole finish-request body ONCE (the lib re-parses
@@ -1112,6 +1124,10 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 		var q req
 		_ = json.NewDecoder(r.Body).Decode(&q) // name optional; anonymous register allowed
+		if isIPHost(r.Host) {
+			httpError(w, 400, "passkeys are not available on an IP address - open the site over its domain")
+			return
+		}
 		wa := rpFromRequest(r)
 		if wa == nil {
 			httpError(w, 500, "ceremony failed")
@@ -1192,6 +1208,10 @@ func (s *sessions) loginBegin(c *ceremony) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// discoverable credentials: no user hint; the lib builds the assertion
 		// payload, the userHandle resolves the identity at finish.
+		if isIPHost(r.Host) {
+			httpError(w, 400, "passkeys are not available on an IP address - open the site over its domain")
+			return
+		}
 		wa := rpFromRequest(r)
 		if wa == nil {
 			httpError(w, 500, "ceremony failed")

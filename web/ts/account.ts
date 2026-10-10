@@ -77,7 +77,19 @@ export async function refreshMe(): Promise<void> {
     const poll = $("accpoll") as HTMLElement;
 
     signedIn = !!me.name;
-    const insecure = !window.isSecureContext && !location.hostname.includes("localhost") && !location.hostname.includes("127.0.0.1");
+    // IP hosts cannot hold passkeys: the browser needs a domain RP ID and the
+    // server config rejects IPs, so 127.0.0.1 and LAN addresses get the hint
+    const host = location.hostname;
+    const isIPHost =
+      /^(\d{1,3}\.){3}\d{1,3}$/.test(host) ||
+      host.startsWith("[") || // bracketed IPv6
+      (/^[0-9a-f:]+$/i.test(host) && host.includes(":")); // bare IPv6 like ::1
+    const insecure =
+      isIPHost ||
+      (!window.isSecureContext && host !== "localhost" && !host.endsWith(".localhost"));
+    ($("browserhint") as HTMLElement).textContent = isIPHost
+      ? "Passkeys don't work on an IP address - open the site over its real domain."
+      : "Passkeys need HTTPS (or localhost). You are on an insecure origin - open the site over its real domain.";
     ($("browserhint") as HTMLElement).classList.toggle("hidden", !insecure);
     if (insecure) {
       reg.disabled = true;
@@ -93,8 +105,7 @@ export async function refreshMe(): Promise<void> {
       nameInput.classList.add("hidden");
       login.classList.add("hidden");
       out.classList.remove("hidden");
-      ($("dashlink") as HTMLElement).classList.remove("hidden");
-      ($("dashview") as HTMLElement).classList.add("hidden"); // overview lives on /dash now
+      $("dashlink").classList.remove("hidden");
     } else {
       poll.textContent =
         me.open === false ? "sign in - new registrations are closed" : "create an account - passkey only";
@@ -108,44 +119,9 @@ export async function refreshMe(): Promise<void> {
       }
       login.classList.remove("hidden");
       out.classList.add("hidden");
-      ($("dashview") as HTMLElement).classList.add("hidden");
     }
   } catch {
     /* server unreachable: leave the pane as configured */
-  }
-}
-
-export async function dashboardRefresh(): Promise<void> {
-  const out = $("sharelist") as HTMLElement;
-  out.textContent = "";
-  const res = await fetch("/api/shares");
-  if (!res.ok) {
-    out.textContent = "Could not load shares.";
-    return;
-  }
-  const rows = (await res.json()) as ShareRow[];
-  if (rows.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "hint";
-    empty.textContent = "No active shares - create a paste while signed in.";
-    out.append(empty);
-    return;
-  }
-  for (const r of rows) {
-    const row = document.createElement("div");
-    row.className = "srow";
-    const link = document.createElement("a");
-    const frag = fragGet(r.id);
-    link.href = "/p/" + r.id + (frag ? "#" + frag : "");
-    link.textContent = r.id.slice(0, 6) + "…";
-    const kind = document.createElement("span");
-    kind.textContent = r.kind === "bundle" ? "files" : "text";
-    kind.className = "skind";
-    const when = document.createElement("span");
-    when.textContent = r.burn ? "burn after reading" : "expires " + expiryText(r.expires);
-    when.className = "swhen";
-    row.append(link, kind, when);
-    out.append(row);
   }
 }
 
@@ -309,9 +285,10 @@ export async function bootAccount(): Promise<void> {
   $("regbtn").addEventListener("click", () => void registerStart());
   $("loginbtn").addEventListener("click", () => void loginStart());
   $("logoutbtn").addEventListener("click", () => void logout());
-  // the header button: signed-in users go straight to /dash, others get the lightbox
+  // the header button: signed-in users go to /dash (the dash itself opens the
+  // identity popover instead of reloading the same page)
   $("accbtn").addEventListener("click", () => {
-    if (signedIn) {
+    if (signedIn && !location.pathname.startsWith("/dash")) {
       location.href = "/dash";
       return;
     }
@@ -327,44 +304,21 @@ export async function bootAccount(): Promise<void> {
 
 let signedIn = false;
 
-// --- the real dashboard page (/dash) ---
-// Detailed share overview: copy-link per row, alive countdown, views counter,
-// plus the identity edit section (name, add passkey).
+// --- the dashboard page (/dash) ---
+// Reuses the standard header/footer/popovers: the compose cards are hidden,
+// #dashroot renders rows plus the identity edit. Anonymous visitors get a
+// sign-in card instead of an empty page.
 
 function shareURL(r: ShareRow): string {
   return location.origin + "/p/" + r.id + (fragGet(r.id) ? "#" + fragGet(r.id) : "");
 }
 
 export async function dashboardPage(): Promise<void> {
-  document.body.textContent = "";
-  const main = document.createElement("main");
-  const head = document.createElement("header");
-  head.className = "top";
-  head.appendChild(
-    Object.assign(document.createElement("a"), {
-      className: "brand",
-      href: "/",
-      textContent: "zeropaste",
-    } as Partial<HTMLAnchorElement>),
-  );
-  main.appendChild(head);
-  const card = document.createElement("section");
-  card.className = "card";
-  card.id = "dashfull";
-  card.innerHTML = "<h2 class='dashtitle'>your active shares</h2>" +
-    "<div id='dashrows'></div>" +
-    "<div class='dashedit hidden' id='dashedit'>" +
-    "  <b>account</b>" +
-    "  <div class='accrow'>" +
-    "    <input type='text' id='dashname' maxlength='64' placeholder='display name' autocomplete='off'>" +
-    "    <button type='button' id='dashsave'>Save name</button>" +
-    "    <button type='button' id='dashreg'>Add passkey</button>" +
-    "  </div>" +
-    "  <div id='dasherr' class='hint danger hidden'></div>" +
-    "</div>" +
-    "<div class='hint'>Links carry the decryption key in the fragment; the server cannot read any of them. Rows disappear when the share expires or burns.</div>";
-  main.appendChild(card);
-  document.body.appendChild(main);
+  $("gate").classList.add("hidden");
+  $("compose").classList.add("hidden");
+  $("linkbox").classList.add("hidden");
+  $("read").classList.add("hidden");
+  $("dashroot").classList.remove("hidden");
 
   $("dashsave").addEventListener("click", () => void saveName());
   $("dashreg").addEventListener("click", () => {
@@ -372,6 +326,15 @@ export async function dashboardPage(): Promise<void> {
     registerStart()
       .then(() => void loadDash())
       .catch((e) => dashError(e instanceof Error ? e.message : "failed"));
+  });
+  $("dashlogout").addEventListener("click", async () => {
+    await logout();
+    location.reload(); // land on the anonymous dashboard
+  });
+  $("dashlogin").addEventListener("click", () => {
+    loginStart()
+      .then(() => void loadDash())
+      .catch((e) => dashError(e instanceof Error ? e.message : "sign in failed"));
   });
 
   await loadDash();
@@ -401,20 +364,27 @@ function dashError(msg: string): void {
 }
 
 async function loadDash(): Promise<void> {
+  $("dasherr").classList.add("hidden");
   const me = (await (await fetch("/api/me")).json()) as MeRec;
-  if (!me.name) return; // anonymous: routers out; the page stays empty
-  ($("dashedit") as HTMLElement).classList.remove("hidden");
-  ($("dashname") as HTMLInputElement).value = me.name;
+  const anon = !me.name;
+  $("dashhead").classList.toggle("hidden", anon);
+  $("dashrows").classList.toggle("hidden", anon);
+  $("dashanon").classList.toggle("hidden", !anon);
+  $("dashedit").classList.toggle("hidden", anon);
+  if (anon) return; // sign-in card is up
+
+  const nameBox = $("dashname") as HTMLInputElement;
+  nameBox.value = me.name ?? "";
   const rowsBox = $("dashrows") as HTMLElement;
   rowsBox.textContent = "";
   const res = await fetch("/api/shares");
   const rows = (await res.json()) as ShareRow[];
   if (rows.length === 0) {
-    rowsBox.innerHTML = "";
-    rowsBox.appendChild(Object.assign(document.createElement("div"), {
-      className: "hint",
-      textContent: "Nothing active yet - share a paste or file bundle while signed in.",
-    } as Partial<HTMLDivElement>));
+    rowsBox.textContent = "";
+    const empty = document.createElement("div");
+    empty.className = "hint";
+    empty.textContent = "Nothing active yet - share a paste or file bundle while signed in.";
+    rowsBox.appendChild(empty);
     return;
   }
   for (const r of rows) {
@@ -430,7 +400,7 @@ async function loadDash(): Promise<void> {
     views.textContent = (r.views ?? 0) + " views";
     views.className = "susers";
     const alive = document.createElement("span");
-    alive.textContent = r.burn ? "" : expiryText(r.expires);
+    alive.textContent = r.burn ? "burn after reading" : expiryText(r.expires);
     alive.className = "swhen";
     const cp = document.createElement("button");
     cp.type = "button";
@@ -444,7 +414,27 @@ async function loadDash(): Promise<void> {
         setTimeout(() => (cp.textContent = "copy link"), 1200);
       })();
     });
-    row.append(link, kind, views, alive, cp);
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "rowdel";
+    del.setAttribute("aria-label", "Delete share " + r.id);
+    del.textContent = "Delete";
+    del.addEventListener("click", () => {
+      if (!confirm("Delete this share? The link stops working for everyone, including you.")) return;
+      del.disabled = true;
+      del.textContent = "deleting…";
+      void (async () => {
+        const res = await fetch("/api/paste/" + r.id, { method: "DELETE" });
+        if (!res.ok) {
+          del.disabled = false;
+          del.textContent = "Delete";
+          dashError("delete failed - the share may already be gone");
+          return;
+        }
+        await loadDash(); // rows recompute live; the deleted one is gone
+      })();
+    });
+    row.append(link, kind, views, alive, cp, del);
     rowsBox.append(row);
   }
 }
