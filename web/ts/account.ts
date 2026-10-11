@@ -236,6 +236,7 @@ function arrayB64u(v: ArrayBuffer | Uint8Array): string {
 }
 
 export async function registerStart(): Promise<void> {
+  ($("accerr") as HTMLElement).classList.add("hidden");
   try {
     const name = ($("accname") as HTMLInputElement).value;
     const res = await fetch("/api/identity/register/begin", {
@@ -263,7 +264,8 @@ export async function registerStart(): Promise<void> {
   }
 }
 
-export async function loginStart(): Promise<void> {
+export async function loginStart(): Promise<boolean> {
+  ($("accerr") as HTMLElement).classList.add("hidden");
   try {
     const res = await fetch("/api/identity/login/begin", { method: "POST" });
     if (!res.ok) {
@@ -282,8 +284,10 @@ export async function loginStart(): Promise<void> {
     }
     ($("accerr") as HTMLElement).classList.add("hidden");
     await refreshMe();
+    return true;
   } catch (e) {
     accError(e instanceof Error ? e.message : "login failed");
+    return false;
   }
 }
 
@@ -295,7 +299,14 @@ export async function logout(): Promise<void> {
 
 export async function bootAccount(): Promise<void> {
   $("regbtn").addEventListener("click", () => void registerStart());
-  $("loginbtn").addEventListener("click", () => void loginStart());
+  // signing in from the lightbox: straight to the dashboard, no lingering panel
+  $("loginbtn").addEventListener("click", () => {
+    void loginStart().then((ok) => {
+      if (!ok) return; // accError already surfaced the problem
+      (document.getElementById("accpanel") as HTMLDivElement).hidePopover();
+      location.href = "/dash";
+    });
+  });
   $("logoutbtn").addEventListener("click", () => void logout());
   // the header button: signed-in users land on /dash (this refreshes the row
   // list); anonymous visitors get the identity popover
@@ -344,9 +355,12 @@ export async function dashboardPage(): Promise<void> {
     location.reload(); // land on the anonymous dashboard
   });
   $("dashlogin").addEventListener("click", () => {
-    loginStart()
-      .then(() => void loadDash())
-      .catch((e) => dashError(e instanceof Error ? e.message : "sign in failed"));
+    // errors must land in #dasherr (the accpanel is closed on /dash);
+    // registerStart swallows into accError, so mirror the failed state here
+    void loginStart().then((ok) => {
+      if (ok) return void loadDash();
+      dashError("sign in failed - check the passkey dialog and try again");
+    });
   });
 
   await loadDash();
