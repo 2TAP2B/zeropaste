@@ -8,9 +8,9 @@
 <meta property="og:description" content="share secrets, not plaintext — zero-knowledge pastes, encrypted in your browser">
 <meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.10" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.10" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.7.10">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.7.11" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.7.11" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.7.11">
 </head>
 <body>
 <main>
@@ -31,18 +31,32 @@
       <svg class="accico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
       <b>your account</b>
     </div>
-    <div id="accpoll" class="hint accstatus"></div>
-    <div class="accrow" id="signactions">
-      <a href="/dash" id="dashlink" class="hidden">Open dashboard</a>
-      <button type="button" id="logoutbtn" class="hidden">Sign out</button>
+    <div id="accpoll" class="accstatus">create an account - passkey only</div>
+
+    <div id="accanon">
+      <div class="accgroup" id="reggroup">
+        <label class="field-label" for="accname">display name (optional)</label>
+        <input type="text" id="accname" placeholder="a name for your passkeys" autocomplete="off">
+        <button type="button" class="primary accfull" id="regbtn">Create account</button>
+      </div>
+      <div class="accdivider" id="accor"><span>or</span></div>
+      <div class="accgroup">
+        <button type="button" class="accfull" id="loginbtn">Sign in with passkey</button>
+      </div>
     </div>
-    <div class="accrow" id="createactions">
-      <input type="text" id="accname" placeholder="a name for your passkeys" autocomplete="off">
-      <button type="button" class="primary" id="regbtn">Create account</button>
+
+    <div id="accuser" class="hidden">
+      <div class="accwho">signed in as <b id="accwhoname"></b></div>
+      <div class="accrow">
+        <a href="/dash" id="dashlink" class="dashbtn">Open dashboard</a>
+        <button type="button" id="logoutbtn">Sign out</button>
+      </div>
+      <div class="accdivider"><span>passkeys</span></div>
+      <div class="accgroup">
+        <button type="button" class="accfull" id="attachbtn">Add another passkey</button>
+      </div>
     </div>
-    <div class="accrow" id="loginrow">
-      <button type="button" id="loginbtn">Sign in with passkey</button>
-    </div>
+
     <div id="accerr" class="hint danger hidden"></div>
     <div id="browserhint" class="hint hidden">Passkeys need HTTPS (or localhost). You are on an insecure origin - open the site over its real domain.</div>
   </div>
@@ -235,6 +249,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.7.10"></script>
+<script src="/assets/app.js?v=0.7.11"></script>
 </body>
 </html>

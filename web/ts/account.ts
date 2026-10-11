@@ -73,9 +73,7 @@ export async function refreshMe(): Promise<void> {
     const res = await fetch("/api/me");
     const me = (await res.json()) as MeRec;
     const reg = $("regbtn") as HTMLButtonElement;
-    const nameInput = $("accname") as HTMLInputElement;
     const login = $("loginbtn") as HTMLButtonElement;
-    const out = $("logoutbtn") as HTMLButtonElement;
     const poll = $("accpoll") as HTMLElement;
 
     signedIn = !!me.name;
@@ -107,30 +105,27 @@ export async function refreshMe(): Promise<void> {
       reg.disabled = true;
       login.disabled = true;
       poll.textContent = "passkeys need HTTPS (or localhost)";
+      $("accanon").classList.remove("hidden");
+      $("accuser").classList.add("hidden");
       return;
     }
     reg.disabled = false;
     login.disabled = false;
     if (signedIn) {
-      poll.textContent = "Signed in as " + (me.name ?? "");
-      reg.textContent = "Add another passkey";
-      nameInput.classList.add("hidden");
-      login.classList.add("hidden");
-      out.classList.remove("hidden");
-      $("dashlink").classList.remove("hidden");
+      // registered view: identity line + dashboard/sign-out + attach row;
+      // the whole groups swap keeps the pane a simple two-state surface
+      $("accanon").classList.add("hidden");
+      $("accuser").classList.remove("hidden");
+      poll.classList.add("hidden");
+      ($("accwhoname") as HTMLElement).textContent = me.name ?? "";
     } else {
-      poll.textContent =
-        me.open === false ? "sign in - new registrations are closed" : "create an account - passkey only";
-      reg.textContent = "Create account";
-      if (me.open === false) {
-        reg.classList.add("hidden");
-        nameInput.classList.add("hidden");
-      } else {
-        reg.classList.remove("hidden");
-        nameInput.classList.remove("hidden");
-      }
-      login.classList.remove("hidden");
-      out.classList.add("hidden");
+      $("accuser").classList.add("hidden");
+      $("accanon").classList.remove("hidden");
+      poll.classList.remove("hidden");
+      const open = me.open !== false;
+      poll.textContent = open ? "create an account - passkey only" : "sign in - new registrations are closed";
+      $("reggroup").classList.toggle("hidden", !open);
+      $("accor").classList.toggle("hidden", !open); // no choice to divide when only sign-in remains
     }
   } catch {
     /* server unreachable: leave the pane as configured */
@@ -299,6 +294,7 @@ export async function logout(): Promise<void> {
 
 export async function bootAccount(): Promise<void> {
   $("regbtn").addEventListener("click", () => void registerStart());
+  $("attachbtn").addEventListener("click", () => void registerStart()); // signed-in: attach another key
   // signing in from the lightbox: straight to the dashboard, no lingering panel
   $("loginbtn").addEventListener("click", () => {
     void loginStart().then((ok) => {

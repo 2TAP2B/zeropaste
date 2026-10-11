@@ -66,15 +66,25 @@
   }
   #accpanel::backdrop { background: rgb(0 0 0 / .55); }
   #accpanel .acchead {
-    display: flex; align-items: center; gap: .5rem; margin-bottom: .35rem;
+    display: flex; align-items: center; gap: .55rem;
+    padding-bottom: .7rem; border-bottom: 1px solid var(--border); margin-bottom: .75rem;
   }
   #accpanel .acchead b { color: var(--text); font-weight: 700; }
   #accpanel .accico { width: 1.25rem; height: 1.25rem; color: var(--accent); flex: 0 0 auto; }
-  #accpanel .accstatus { margin-top: 0; }
-  #accpanel #accpoll { display: block; margin-bottom: .75rem; color: var(--muted); }
+  #accpanel .accstatus { display: block; font-size: .78rem; color: var(--muted); margin: 0 0 .9rem; }
+  #accpanel .accgroup { display: flex; flex-direction: column; gap: .5rem; }
+  #accpanel .accfull { width: 100%; justify-content: center; }
+  #accpanel .accdivider {
+    display: flex; align-items: center; gap: .7rem;
+    margin: .85rem 0; color: var(--muted); font-size: .72rem; user-select: none;
+  }
+  #accpanel .accdivider::before, #accpanel .accdivider::after {
+    content: ""; height: 1px; background: var(--border); flex: 1;
+  }
+  #accpanel .accwho { font-size: .85rem; color: var(--muted); margin-bottom: .6rem; }
+  #accpanel .accwho b { color: var(--text); overflow-wrap: anywhere; }
   /* shared by the dashboard identity rows too - scoped rules left them unspaced */
   .accrow { display: flex; gap: .6rem; flex-wrap: wrap; margin: .5rem 0; }
-  #accpanel .accname, #accpanel #accname { flex: 1 1 10rem; }
   #accpanel .hint { margin-top: .5rem; }
   .dashhead {
     display: flex; justify-content: space-between; align-items: center;
@@ -320,7 +330,7 @@
   }
   #filelist:empty { display: none; }
   .readmeta .chipmeta:empty { display: none; }
-  .hidden { display: none; }
+  .hidden { display: none !important; } /* !important: scoped display rules (e.g. #accpanel .accgroup, .previewopen) otherwise beat the class */
   .foot {
     margin-top: 1.5rem; font-size: .75rem; color: var(--muted);
     text-align: center; line-height: 1.7;
