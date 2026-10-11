@@ -12,7 +12,7 @@ let
 in
 {
   options.services.zeropaste = {
-    enable = mkEnableOption "zeropaste — zero-knowledge paste sharing";
+    enable = mkEnableOption "zeropaste - zero-knowledge paste sharing";
 
     package = mkOption {
       type = types.package;
@@ -26,7 +26,7 @@ in
       default = "127.0.0.1:8080";
       description = ''
         Listen address (`addr:port`). Keep it on loopback when a reverse proxy
-        terminates TLS in front — the app deliberately sets no HSTS.
+        terminates TLS in front - the app deliberately sets no HSTS.
       '';
     };
 
@@ -54,7 +54,7 @@ in
 
   config = mkIf cfg.enable {
     systemd.services.zeropaste = {
-      description = "zeropaste — zero-knowledge paste sharing";
+      description = "zeropaste - zero-knowledge paste sharing";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
       environment = mkIf (!cfg.registrationOpen) { REG_OPEN = "false"; };
@@ -67,7 +67,7 @@ in
         Restart = "on-failure";
         RestartSec = 5;
 
-        # hardening: the server is two flags and a static dir — sandbox it tight
+        # hardening: the server is two flags and a static dir - sandbox it tight
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;

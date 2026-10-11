@@ -6,7 +6,7 @@
 # zeropaste in one derivation: single Go binary, embedded web/, stdlib only.
 buildGoModule {
   pname = "zeropaste";
-  version = "0.8.1";
+  version = "0.8.2";
   src = ./.;
   # real vendor hash: Go now has the go-webauthn dependency
   vendorHash = "sha256-9/wut8nmHfRSwoTUxf1YgdFqggGe+eh9YCzLLpFFaUU=";
@@ -15,7 +15,7 @@ buildGoModule {
   ldflags = [ "-s" "-w" ];
 
   # go installs the binary after the module path ("paste"), which collides
-  # with coreutils paste(1) in PATH — rename it.
+  # with coreutils paste(1) in PATH - rename it.
   postInstall = ''
     if [ -f "$out/bin/paste" ]; then
       mv "$out/bin/paste" "$out/bin/zeropaste"

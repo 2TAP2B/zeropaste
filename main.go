@@ -1,4 +1,4 @@
-// zeropaste — zero-knowledge paste sharing in a single binary.
+// zeropaste - zero-knowledge paste sharing in a single binary.
 // Server stores only ciphertext; the AES-256-GCM key lives in the URL fragment.
 package main
 
@@ -440,7 +440,7 @@ func main() {
 	go janitor(*dataDir)
 
 	// create-gate: presence of CREATE_KEY requires a bearer passphrase on POST
-	// /api/paste. Reads and DELETEs stay open — the link is the capability.
+	// /api/paste. Reads and DELETEs stay open - the link is the capability.
 	createKey := os.Getenv("CREATE_KEY")
 	if createKey != "" {
 		log.Print("zeropaste: create-gate enabled")
@@ -519,7 +519,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 // gateStatus lets the client render the gate screen immediately instead of
-// discovering the gate through a failed submit. Boolean only — never expose
+// discovering the gate through a failed submit. Boolean only - never expose
 // the key or a hint of it.
 func gateStatus(key string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
@@ -528,7 +528,7 @@ func gateStatus(key string) http.HandlerFunc {
 }
 
 // gateVerify validates a candidate site passphrase (Bearer header) with 204 on
-// success / 401 on failure — lets the client unlock its gate screen up front.
+// success / 401 on failure - lets the client unlock its gate screen up front.
 func gateVerify(key string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if key == "" || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")), []byte(key)) != 1 {
@@ -569,7 +569,7 @@ func secure(next http.Handler) http.Handler {
 
 // ponytail: in-memory fixed-window limiter, correct for this single process;
 // back it with a shared store only if zeropaste ever runs as multiple replicas.
-// X-Forwarded-For: the LAST entry is used — the single trusted reverse proxy
+// X-Forwarded-For: the LAST entry is used - the single trusted reverse proxy
 // in front appends the real client IP, so clients spoofing an earlier entry
 // only pollute their own chain, never shift their bucket.
 type limiter struct {
@@ -1812,7 +1812,7 @@ func (si *shareIndex) list() http.HandlerFunc {
 // registrationOpen: whether a FRESH identity may be registered right now.
 // USER_ACCOUNTS=false (accountsOn) kills the whole feature; REG_OPEN=false
 // always closes; USER_REGISTRATION=false (regFirstOnly) closes once an
-// identity exists — the first user bootstraps, then the door shuts. Existing
+// identity exists - the first user bootstraps, then the door shuts. Existing
 // sessions can always attach more passkeys; fresh accounts cannot.
 func registrationOpen(identCount int) bool {
 	if !accountsOn {

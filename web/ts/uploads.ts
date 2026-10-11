@@ -2,7 +2,7 @@ import { randomKey, deriveKey, b64uFromBytes, bytesFromB64u, importKeyB64u, AesK
 import { assembleEnv } from "./bundle";
 
 // Client-side byte cap mirrors the server MAX_UPLOAD default (100 MB). The
-// server is the authority — init rejects oversized shares regardless — and
+// server is the authority - init rejects oversized shares regardless - and
 // gateFlow() syncs this to the instance ceiling via setClientMaxUpload so
 // larger deployments keep pre-checks honest without hardcoding envs client-side.
 // NOTE: 100*1024*1024 written out - JS bitwise shifts are 32-bit signed, so

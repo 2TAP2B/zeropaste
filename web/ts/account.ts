@@ -1,6 +1,6 @@
 import { $ } from "./dom";
 import { b64uFromBytes, bytesFromB64u, deriveKey, seal } from "./crypto";
-import { humanSize } from "./ui";
+import { humanSize, copy } from "./ui";
 
 // Passkey account flows + the active-shares dashboard, both passkey-only.
 // Anonymous behavior is untouched; login exists purely for the dashboard.
@@ -78,7 +78,7 @@ export async function refreshMe(): Promise<void> {
     const poll = $("accpoll") as HTMLElement;
 
     signedIn = !!me.name;
-    // USER_ACCOUNTS=false: the whole identity feature is off — the account
+    // USER_ACCOUNTS=false: the whole identity feature is off - the account
     // button and pane go away entirely (the /dash card adapts in loadDash)
     const accountsOff = me.accounts === false;
     ($("accbtn") as HTMLButtonElement).classList.toggle("hidden", accountsOff);
@@ -333,12 +333,39 @@ function shareURL(r: ShareRow): string {
   return location.origin + "/p/" + r.id + (fragGet(r.id) ? "#" + fragGet(r.id) : "");
 }
 
+function dashTab(which: string): void {
+  for (const b of document.querySelectorAll("#dashtabs .dashtab")) {
+    b.classList.toggle("active", (b as HTMLElement).dataset.tab === which);
+  }
+  for (const pane of ["pane-shares", "pane-reverse", "pane-account"]) {
+    $(pane).classList.toggle("hidden", pane !== "pane-" + which);
+  }
+  try {
+    localStorage.setItem("zp.tab", which);
+  } catch {
+    /* private mode */
+  }
+}
+
 export async function dashboardPage(): Promise<void> {
   $("gate").classList.add("hidden");
   $("compose").classList.add("hidden");
   $("linkbox").classList.add("hidden");
   $("read").classList.add("hidden");
   $("dashroot").classList.remove("hidden");
+
+  // persisted dashboard tab (default shares; holdings tab view choice)
+  let tab = "shares";
+  try {
+    const saved = localStorage.getItem("zp.tab");
+    if (saved === "shares" || saved === "reverse" || saved === "account") tab = saved;
+  } catch {
+    /* private mode */
+  }
+  dashTab(tab);
+  for (const b of document.querySelectorAll("#dashtabs .dashtab")) {
+    (b as HTMLElement).addEventListener("click", () => dashTab((b as HTMLElement).dataset.tab ?? "shares"));
+  }
 
   $("dashsave").addEventListener("click", () => void saveName());
   $("dashreg").addEventListener("click", () => {
@@ -430,7 +457,7 @@ function dashError(msg: string): void {
   err.classList.remove("hidden");
 }
 
-// uplink keys: 32 fresh bytes, base64url — same shape as paste fragments
+// uplink keys: 32 fresh bytes, base64url - same shape as paste fragments
 function freshKeyB64(): string {
   const raw = crypto.getRandomValues(new Uint8Array(32));
   let s = "";
@@ -448,6 +475,24 @@ interface RevRow {
   items: { id: string; size: number; created: number }[];
 }
 
+// inline icon snippets (static strings only; never user data)
+const IC = {
+  chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>',
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
+  open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>',
+  del: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
+};
+
+function iconBtn(aria: string, svg: string, cls = "rowicon"): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = cls;
+  b.setAttribute("aria-label", aria);
+  b.title = aria;
+  b.innerHTML = svg; // static icon markup only
+  return b;
+}
+
 async function renderRshares(): Promise<void> {
   const box = $("revlist") as HTMLElement;
   box.textContent = "";
@@ -457,61 +502,43 @@ async function renderRshares(): Promise<void> {
   if (rows.length === 0) {
     const empty = document.createElement("div");
     empty.className = "hint";
-    empty.textContent = "No reverse shares yet — create a drop link below.";
+    empty.textContent = "No reverse shares yet - create a drop link below.";
     box.append(empty);
     return;
   }
   for (const r of rows) {
     // pass mode never stashes a fragment; ignore leftover stash entries from
-    // a same-slug fragment-mode predecessor WIPED and recreated with a pass
+    // a same-slug fragment-mode predecessor wiped and recreated with a pass
     const keyB64 = r.pass ? "" : fragGet("rv:" + r.slug);
+    const uplink = r.pass
+      ? location.origin + "/r/" + r.slug
+      : location.origin + "/r/" + r.slug + (keyB64 ? "#" + keyB64 : "");
+
     const row = document.createElement("div");
-    row.className = "srow";
-    const slug = document.createElement("span");
-    slug.className = "skind";
+    row.className = "revrow";
+
+    // head: chevron + slug + meta + icon actions
+    const head = document.createElement("div");
+    head.className = "revhead";
+    const chev = iconBtn("Uploaded files", IC.chev, "rowicon chev");
+    chev.setAttribute("aria-expanded", "false");
+    const slug = document.createElement("button");
+    slug.type = "button";
+    slug.className = "revslug";
     slug.textContent = "/" + r.slug;
     const stats = document.createElement("span");
-    stats.className = "swhen";
-    stats.textContent = r.uploads === 0 ? (r.pass ? "awaiting files · passphrase mode" : "awaiting files") : `${r.uploads} file${r.uploads === 1 ? "" : "s"} · ${humanSize(r.bytes)}`;
-    const exp = document.createElement("span");
-    exp.className = "susers";
-    exp.textContent = expiryText(r.expires);
-    const up = document.createElement("a");
-    up.className = "rowcopy";
-    if (r.pass) {
-      // passphrase mode: the uplink is a clean bare link; the owner still
-      // needs the passphrase (theirs to remember) — open links are /p/<id>
-      up.href = location.origin + "/r/" + r.slug;
-      up.textContent = "drop link";
-      row.title = "Share the passphrase over another channel.";
-    } else if (keyB64) {
-      up.href = location.origin + "/r/" + r.slug + "#" + keyB64;
-      up.textContent = "drop link";
-    } else {
-      up.textContent = "key missing";
-      up.title = "The uplink key lives in this browser's stash - created on " + (location.origin) + " earlier.";
-      up.className = "rowcopy missing";
-    }
-    const cp = document.createElement("button");
-    cp.type = "button";
-    cp.className = "rowcopy";
-    cp.setAttribute("aria-label", "Copy drop link");
-    cp.textContent = "copy link";
-    cp.addEventListener("click", () => {
-      void (async () => {
-        const url = r.pass
-          ? location.origin + "/r/" + r.slug
-          : location.origin + "/r/" + r.slug + "#" + keyB64;
-        await navigator.clipboard.writeText(url);
-        cp.textContent = "copied!";
-        setTimeout(() => (cp.textContent = "copy link"), 1200);
-      })();
-    });
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "rowdel";
-    del.setAttribute("aria-label", "Delete reverse share " + r.slug);
-    del.textContent = "Delete";
+    stats.className = "revmeta";
+    stats.textContent =
+      (r.pass ? "passphrase mode · " : "") +
+      (r.uploads === 0
+        ? "awaiting files"
+        : `${r.uploads} file${r.uploads === 1 ? "" : "s"} · ${humanSize(r.bytes)}`) +
+      ` · expires ${expiryText(r.expires).replace(/^in /, "")}`;
+    const acts = document.createElement("span");
+    acts.className = "revacts";
+    const cp = iconBtn("Copy drop link", IC.copy);
+    cp.addEventListener("click", () => void copy(uplink, cp));
+    const del = iconBtn("Delete reverse share", IC.del, "rowicon danger");
     del.addEventListener("click", () => {
       if (!confirm("Delete this reverse share? The link dies and all collected files are removed.")) return;
       del.disabled = true;
@@ -524,38 +551,60 @@ async function renderRshares(): Promise<void> {
         }
         try {
           localStorage.removeItem("zp.frag.rv:" + r.slug);
+          localStorage.removeItem("zp.tab-rev:" + r.slug);
         } catch {
           /* private mode */
         }
         await renderRshares();
       })();
     });
-    row.append(slug, stats, exp, up);
-    if (!r.pass && keyB64) row.append(cp);
-    if (r.pass) {
-      const badge = document.createElement("span");
-      badge.className = "chipmeta";
-      badge.textContent = "passphrase";
-      row.append(badge);
+    acts.append(cp, del);
+    head.append(chev, slug, stats, acts);
+    row.append(head);
+
+    // collapsible detail: uplink row + arrivals
+    const detail = document.createElement("div");
+    detail.className = "revdetail hidden";
+    const ul = document.createElement("div");
+    ul.className = "srow revup";
+    const lk = document.createElement("span");
+    lk.className = "revuplink";
+    lk.textContent = uplink;
+    const valid = r.pass || keyB64;
+    ul.append(lk);
+    if (!valid) {
+      const warn = document.createElement("span");
+      warn.className = "chipmeta burn";
+      warn.textContent = "key missing on this browser - recreate the uplink or copy from the original tab";
+      ul.append(warn);
     }
-    row.append(del);
-    box.append(row);
-    // arrivals: fragment mode links carry the stashed key; passphrase mode
-    // links are bare /p/<id> — the standard unlock flow opens them
+    detail.append(ul);
     for (const it of r.items) {
       const ar = document.createElement("div");
       ar.className = "srow revarrival";
       const fid = document.createElement("a");
       fid.textContent = "/p/" + it.id.slice(0, 6) + "…";
-      fid.href = keyB64 ? location.origin + "/p/" + it.id + "#" + keyB64 : location.origin + "/p/" + it.id;
+      if (r.pass || keyB64) {
+        fid.href = location.origin + "/p/" + it.id + (r.pass ? "" : "#" + keyB64);
+      } else {
+        fid.className = "missing";
+      }
       fid.title = it.id;
-      if (!keyB64 && !r.pass) fid.className = "missing";
       const fsize = document.createElement("span");
       fsize.className = "swhen";
       fsize.textContent = it.size > 0 ? humanSize(it.size) : "text";
       ar.append(fid, fsize);
-      box.append(ar);
+      detail.append(ar);
     }
+    const toggle = (): void => {
+      const open = detail.classList.toggle("hidden");
+      chev.classList.toggle("open", !open);
+      chev.setAttribute("aria-expanded", String(!open));
+    };
+    chev.addEventListener("click", toggle);
+    slug.addEventListener("click", toggle);
+    row.append(detail);
+    box.append(row);
   }
 }
 
@@ -579,10 +628,14 @@ async function loadDash(): Promise<void> {
       ($("dashanon").querySelector(":scope > b") as HTMLElement).textContent = "your shares live here";
       $("dashanontext").textContent = "Create an account or sign in with a passkey to see, copy and delete your active shares.";
     }
-    $("dashrev").classList.add("hidden");
+    $("dashtabs").classList.add("hidden");
+    $("dashpanes").classList.add("hidden");
+    $("dashanon").classList.remove("hidden");
     return; // sign-in card is up
   }
-  $("dashrev").classList.remove("hidden");
+  $("dashanon").classList.add("hidden");
+  $("dashtabs").classList.remove("hidden");
+  $("dashpanes").classList.remove("hidden");
   void renderRshares().catch(() => {
     dashError("could not list reverse shares");
   });

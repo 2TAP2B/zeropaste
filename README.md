@@ -1,28 +1,28 @@
 # zeropaste
 
-Self-hosted, zero-knowledge paste sharing in a single Go binary. The browser encrypts your paste (AES-256-GCM via WebCrypto) before it ever hits the wire — the server stores ciphertext and nothing else. The decryption key rides in the URL fragment, which browsers never send upstream.
+Self-hosted, zero-knowledge paste sharing in a single Go binary. The browser encrypts your paste (AES-256-GCM via WebCrypto) before it ever hits the wire - the server stores ciphertext and nothing else. The decryption key rides in the URL fragment, which browsers never send upstream.
 
-Anonymous by default: no sign-up, no cookies, no request logs. Optional passkey accounts exist purely for a private dashboard of your active shares — opt-in, never required to paste. One audited third-party Go dependency (go-webauthn); everything else is stdlib.
+Anonymous by default: no sign-up, no cookies, no request logs. Optional passkey accounts exist purely for a private dashboard of your active shares - opt-in, never required to paste. One audited third-party Go dependency (go-webauthn); everything else is stdlib.
 
 ## Features
 
-- Single binary, all frontend assets vendored and embedded — one `go build` ships the whole app; no CDN calls anywhere
+- Single binary, all frontend assets vendored and embedded - one `go build` ships the whole app; no CDN calls anywhere
 - Zero-knowledge: random key per paste, lives in the URL fragment, stripped from the address bar after decrypt
 - Optional passphrase mode: PBKDF2-SHA-256 (600k iterations) + random salt; the link alone is useless, share the passphrase over another channel
-- Burn after reading (paste dies on first successful decrypt — link unfurlers and wrong-passphrase visitors can't destroy it)
-- Free-form burn time: `10m`, `6h`, `1d`, `30 days` — 1 minute to 30 days by default (`MAX_TTL_DAYS` raises or lowers the ceiling), swept by a janitor every minute
+- Burn after reading (paste dies on first successful decrypt - link unfurlers and wrong-passphrase visitors can't destroy it)
+- Free-form burn time: `10m`, `6h`, `1d`, `30 days` - 1 minute to 30 days by default (`MAX_TTL_DAYS` raises or lowers the ceiling), swept by a janitor every minute
 - File bundles that stay encrypted end to end (AES-GCM key per share, manifest never readable by the server) with client-side image thumbnails and a click-to-open lightbox, so big photo bundles load fast
 - Clipboard paste: copy an image anywhere and Ctrl+V attaches it to the upload section
 - Optional syntax highlighting (vendored highlight.js, no CDN calls) with auto language detection
 - Share link QR code, rendered client-side
 - Light/dark theme (system default + toggle), fully responsive down to phones
-- Optional create-gate: one site passphrase in front of `POST /api/paste` (`CREATE_KEY` env); reads stay public — the link is the capability
-- Optional passkey accounts: register/sign in from the account pane (header icon). Creating pastes while signed in feeds the **active-shares dashboard** (`/dash`) — the server sees only expiry/burn per row, never content — with per-row copy-link and delete. Registration can be locked with `REG_OPEN=false`, closed after the first account with `USER_REGISTRATION=false`, and the whole thing switched off with `USER_ACCOUNTS=false`
+- Optional create-gate: one site passphrase in front of `POST /api/paste` (`CREATE_KEY` env); reads stay public - the link is the capability
+- Optional passkey accounts: register/sign in from the account pane (header icon). Creating pastes while signed in feeds the **active-shares dashboard** (`/dash`) - the server sees only expiry/burn per row, never content - with per-row copy-link and delete. Registration can be locked with `REG_OPEN=false`, closed after the first account with `USER_REGISTRATION=false`, and the whole thing switched off with `USER_ACCOUNTS=false`
 - Hardened defaults: strict CSP, nosniff, DENY framing, no-referrer, 30 pastes/min/IP rate limit, slowloris timeouts, no directory listings
 
 ## Install
 
-Self-host in 30 seconds — image from GHCR, ~9 MB, nothing to build:
+Self-host in 30 seconds - image from GHCR, ~9 MB, nothing to build:
 
 ```sh
 docker run -d --name zeropaste -p 8080:8080 -v paste-data:/data ghcr.io/2tap2b/zeropaste:latest
@@ -49,7 +49,7 @@ volumes:
   paste-data:
 ```
 
-The app UI carries the same two blocks — footer → **self-host in 30 seconds**.
+The app UI carries the same two blocks - footer → **self-host in 30 seconds**.
 
 ### NixOS
 
@@ -69,7 +69,7 @@ services.zeropaste = {
 };
 ```
 
-Under the hood: `DynamicUser` with `StateDirectory=zeropaste` (`/var/lib/zeropaste` holds the 0600 JSON store), `Restart=on-failure`, and a tight systemd sandbox (NoNewPrivileges, ProtectSystem=strict, PrivateDevices, CapabilityBoundingSet empty, syscall filter). Env knobs beyond the module's options ride in through your own config — the service attrset merges:
+Under the hood: `DynamicUser` with `StateDirectory=zeropaste` (`/var/lib/zeropaste` holds the 0600 JSON store), `Restart=on-failure`, and a tight systemd sandbox (NoNewPrivileges, ProtectSystem=strict, PrivateDevices, CapabilityBoundingSet empty, syscall filter). Env knobs beyond the module's options ride in through your own config - the service attrset merges:
 
 ```nix
 systemd.services.zeropaste.environment = {
@@ -96,8 +96,8 @@ Every value is optional; unset means the default. Set them via `environment:` in
 
 | env | default | what it does |
 |---|---|---|
-| `CREATE_KEY` | _(unset)_ | site passphrase in front of `POST /api/paste` and bundle creates; reads stay public — the link is the capability. **Presence is the switch.** |
-| `USER_ACCOUNTS` | `true` | `false` switches the whole identity subsystem off: no registration, no sign-in, no dashboard rows — the app runs anonymous-only. |
+| `CREATE_KEY` | _(unset)_ | site passphrase in front of `POST /api/paste` and bundle creates; reads stay public - the link is the capability. **Presence is the switch.** |
+| `USER_ACCOUNTS` | `true` | `false` switches the whole identity subsystem off: no registration, no sign-in, no dashboard rows - the app runs anonymous-only. |
 | `USER_REGISTRATION` | `true` | `false` = first-user bootstrap: sign-up stays open only until the first account exists, then closes (sign-ins keep working). |
 | `REG_OPEN` | `true` | static registration kill switch (useful after the first account; sign-ins always stay open). |
 | `MAX_TTL_DAYS` | `30` | share-time ceiling in days (1–366); enforced on text pastes and file bundles alike. |
@@ -112,22 +112,22 @@ Random-key flow: the browser generates 32 random bytes, encrypts (AES-256-GCM, 1
 
 Passphrase flow: 16-byte salt goes to the server, the key is derived in the browser from passphrase + salt (PBKDF2, 600k iterations). The link contains no key; the passphrase never touches the network.
 
-Burn: for random-key pastes the server deletes the file right after the first fetch. For passphrase pastes the client sends `DELETE` only after a successful decrypt. A janitor goroutine removes expired files every minute. Everything is a 0600 JSON file in a 0700 directory — no database. Share links are assembled client-side from `location.origin`; the server never knows its public hostname.
+Burn: for random-key pastes the server deletes the file right after the first fetch. For passphrase pastes the client sends `DELETE` only after a successful decrypt. A janitor goroutine removes expired files every minute. Everything is a 0600 JSON file in a 0700 directory - no database. Share links are assembled client-side from `location.origin`; the server never knows its public hostname.
 
-File bundles: the client frames everything into one server-opaque envelope — `manifestCt ‖ file cts ‖ thumb cts`, all encrypted with one AES-GCM key per share. The manifest (names, MIME types, note text) never leaves the browser; the server sees only block lengths and an expiry.
+File bundles: the client frames everything into one server-opaque envelope - `manifestCt ‖ file cts ‖ thumb cts`, all encrypted with one AES-GCM key per share. The manifest (names, MIME types, note text) never leaves the browser; the server sees only block lengths and an expiry.
 
 ## Security model
 
 - Keys exist only in the browser; the server cannot read any paste, compromised or subpoenaed
-- Anonymous use stores only ciphertext, salt, and an expiry timestamp — no IPs, no request logs, no tracking pixels
-- When passkey accounts are enabled, the server additionally stores identity names, WebAuthn public-key material, and HMAC-signed session cookies (`zp.session`, HttpOnly, SameSite=Lax) — still never paste content or keys; `USER_ACCOUNTS=false` reduces the server to the anonymous footprint
-- Create-gate passphrase is per-tab in `sessionStorage`, never persisted; the only `localStorage` entry is the theme choice (`zp.theme`) — a UI preference, not data
+- Anonymous use stores only ciphertext, salt, and an expiry timestamp - no IPs, no request logs, no tracking pixels
+- When passkey accounts are enabled, the server additionally stores identity names, WebAuthn public-key material, and HMAC-signed session cookies (`zp.session`, HttpOnly, SameSite=Lax) - still never paste content or keys; `USER_ACCOUNTS=false` reduces the server to the anonymous footprint
+- Create-gate passphrase is per-tab in `sessionStorage`, never persisted; the only `localStorage` entry is the theme choice (`zp.theme`) - a UI preference, not data
 - Supply chain: one direct Go dependency (`go-webauthn` for passkey support), audited with `govulncheck` in the release gate; vendored highlight.js and qrcode-generator are committed and served from the binary, never hotlinked
 - Advanced: strict CSP (`default-src 'self'; img-src 'self' blob:`), `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, body caps, per-IP fixed-window limiter, constant-time key comparison
-- Paste rendering uses `textContent` only — `innerHTML` with paste content does not exist
+- Paste rendering uses `textContent` only - `innerHTML` with paste content does not exist
 
-For full details, read [AGENTS.md](AGENTS.md) — the complete spec.
+For full details, read [AGENTS.md](AGENTS.md) - the complete spec.
 
 ## Contributing
 
-PRs welcome, but respect the constraints: single binary, one Go module dependency (passkeys only — no web frameworks, no DB drivers), English UI, no accounts beyond the optional passkey system. Run `gofmt -l .`, `go vet ./...`, `go test ./...`, `tsc --noEmit`, and regen the bundle (`esbuild --bundle web/ts/app.ts --outfile=web/assets/app.js --minify --target=es2020`) before submitting; add a test for every abuse case before adding the mitigation.
+PRs welcome, but respect the constraints: single binary, one Go module dependency (passkeys only - no web frameworks, no DB drivers), English UI, no accounts beyond the optional passkey system. Run `gofmt -l .`, `go vet ./...`, `go test ./...`, `tsc --noEmit`, and regen the bundle (`esbuild --bundle web/ts/app.ts --outfile=web/assets/app.js --minify --target=es2020`) before submitting; add a test for every abuse case before adding the mitigation.

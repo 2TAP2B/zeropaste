@@ -4,7 +4,7 @@ import { humanSize } from "./ui";
 import { deriveKey, open_, bytesFromB64u, importKeyB64u, AesKey } from "./crypto";
 
 // /r/<slug>#<keyB64>: the sender-facing reverse upload page. The slug picks
-// the inbox, the fragment key is required — uploads are encrypted client-side
+// the inbox, the fragment key is required - uploads are encrypted client-side
 // with it, so nothing new reaches the server: same contract as every paste.
 let picked: File[] = [];
 let activeAbort: AbortController | null = null;
@@ -86,7 +86,7 @@ export async function reverseView(): Promise<void> {
     return;
   }
   if (keyB64 && meta.salt) {
-    rfail("This drop link is passphrase-protected — open it WITHOUT the # part and use the collector's passphrase.");
+    rfail("This drop link is passphrase-protected - open it WITHOUT the # part and use the collector's passphrase.");
     return;
   }
   const cap = meta.maxSize;
@@ -94,11 +94,11 @@ export async function reverseView(): Promise<void> {
   $("rmeta").textContent =
     "files up to " + humanSize(cap) + " · link lives until " + expires.toLocaleDateString() + " " + expires.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  // passphrase uplinks: unlock first — the AES key derives locally from the
+  // passphrase uplinks: unlock first - the AES key derives locally from the
   // passphrase + public salt and is verified against the sealed check token
   if (meta.salt) {
     if (keyB64) {
-      rfail("This drop link is passphrase-protected — open it without the # part and use the collector's passphrase.");
+      rfail("This drop link is passphrase-protected - open it without the # part and use the collector's passphrase.");
       return;
     }
     history.replaceState(null, "", location.pathname);
@@ -224,7 +224,7 @@ async function startBody(key: AesKey, expires: number, cap: number, salt?: strin
         prog.classList.add("hidden");
         fill.style.width = "0";
         const done = $("rdone") as HTMLElement;
-        done.textContent = "Delivered — the collector has it now.";
+        done.textContent = "Delivered - the collector has it now.";
         done.classList.remove("hidden");
         setTimeout(() => done.classList.add("hidden"), 6000);
       } catch (e) {

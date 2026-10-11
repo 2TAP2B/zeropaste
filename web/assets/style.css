@@ -91,22 +91,61 @@
     margin-bottom: .6rem;
   }
   .dashhead b { color: var(--text); }
+  .dashtabs { display: flex; gap: .35rem; }
+  .dashtab {
+    font-size: .82rem; padding: .4rem .85rem; border-radius: 999px;
+    background: none; border: 1px solid var(--border); color: var(--muted);
+  }
+  .dashtab:hover { color: var(--text); border-color: var(--accent); }
+  .dashtab.active {
+    background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+  }
+  .dashpane { margin-top: .9rem; }
   .dashbtn {
     display: inline-block; font-size: .75rem; font-weight: 600; text-decoration: none;
     background: var(--accent); border: 1px solid var(--accent); color: var(--on-accent);
     border-radius: 6px; padding: .3rem .75rem;
   }
   .dashbtn:hover { background: var(--accent-h); border-color: var(--accent-h); }
-  .dashrev { margin-top: 1.25rem; border-top: 1px solid var(--border); padding-top: .75rem; }
-  .dashrev .dashhead { margin-bottom: .35rem; }
   #revlist { display: flex; flex-direction: column; gap: .4rem; margin-bottom: .5rem; }
+  .revrow { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+  .revhead {
+    display: flex; align-items: center; gap: .55rem;
+    padding: .5rem .6rem; font-size: .8rem;
+  }
+  .revslug {
+    background: none; border: none; padding: 0; margin: 0;
+    font: inherit; font-weight: 600; color: var(--text); cursor: pointer;
+    text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .revslug:hover { color: var(--accent); }
+  .revmeta { flex: 1 1 auto; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+  .revacts { display: flex; align-items: center; gap: .35rem; flex: 0 0 auto; }
+  .rowicon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.9rem; height: 1.9rem; padding: .4rem;
+    background: none; border: 1px solid transparent; border-radius: 6px;
+    color: var(--muted); cursor: pointer;
+  }
+  .rowicon svg { width: 1.05rem; height: 1.05rem; }
+  .rowicon:hover { color: var(--accent); border-color: var(--border); }
+  .rowicon.danger:hover { color: var(--danger); }
+  .chev svg { transition: transform .15s; }
+  .chev.open svg { transform: rotate(180deg); }
+  .revdetail { padding: 0 .6rem .6rem; display: flex; flex-direction: column; gap: .35rem; }
+  .revdetail .srow { margin: 0; }
+  .revup { align-items: baseline; }
+  .revuplink { font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+  .revarrival a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .revform input[type="text"] { flex: 0 1 8rem; width: auto; }
   .revform #revslug { flex: 1 1 10rem; }
   .revform input[aria-label="link expiry"], .revform input[aria-label="max file size in MB"] { flex: 0 0 auto; width: 4.5rem; text-align: center; }
-  #rhead { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; flex-wrap: wrap; margin-bottom: .35rem; }
+  #rhead { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; flex-wrap: wrap; margin-bottom: .75rem; }
   #rhead b { color: var(--text); }
   #rmeta { margin-top: 0; }
-  .rdrop { margin-top: 0; }
+  .rdrop { margin-top: .75rem; margin-bottom: .1rem; }
+  #rfiles { margin-top: .6rem; }
+  #rsend { margin-top: .9rem; }
   .dashacts { display: flex; align-items: center; gap: .5rem; }
   .dashiconbtn {
     width: 2.1rem; height: 2.1rem; padding: .45rem; flex: 0 0 auto;

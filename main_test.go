@@ -248,7 +248,7 @@ func TestAssetsServed(t *testing.T) {
 func TestRateLimit(t *testing.T) {
 	h := build(t.TempDir(), "")
 	body := fmt.Sprintf(`{"data":%q,"ttl":"1d"}`, fakePayload())
-	// abuse case: POST flood filling the disk — 30/min/IP, then 429
+	// abuse case: POST flood filling the disk - 30/min/IP, then 429
 	for i := 0; i < 30; i++ {
 		if rec := post(t, h, body); rec.Code != 200 {
 			t.Fatalf("post %d: got %d, want 200", i+1, rec.Code)
@@ -262,7 +262,7 @@ func TestRateLimit(t *testing.T) {
 func TestPathValueAbuse(t *testing.T) {
 	h := build(t.TempDir(), "")
 	for _, path := range []string{
-		"/api/paste/abcdefgh..", // dot traversal attempt — alphabet check must reject
+		"/api/paste/abcdefgh..", // dot traversal attempt - alphabet check must reject
 		"/api/paste/abcd!!",
 		"/api/paste/ab", // too short
 	} {
@@ -687,7 +687,7 @@ func TestFeatureSwitches(t *testing.T) {
 			t.Fatalf("accounts flag: got %d %s", rec.Code, rec.Body)
 		}
 		// the ceremony routes disappear: dropped POSTs hit the GET / catch-all
-		// and become 405 (method not allowed) — nothing identity-shaped answers
+		// and become 405 (method not allowed) - nothing identity-shaped answers
 		if rec := postTo(t, h, "/api/identity/register/begin", `{"name":"x"}`, ""); rec.Code != 405 {
 			t.Fatalf("register begin with accounts off: got %d, want 405", rec.Code)
 		}

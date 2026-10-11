@@ -1,5 +1,5 @@
 {
-  description = "zeropaste — zero-knowledge paste sharing: dev shell, package, NixOS module";
+  description = "zeropaste - zero-knowledge paste sharing: dev shell, package, NixOS module";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
