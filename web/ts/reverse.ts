@@ -1,6 +1,7 @@
 import { $ } from "./dom";
 import { uploadBundle, abortUpload, UploadAborted } from "./uploads";
 import { humanSize } from "./ui";
+import { deriveKey, open_, bytesFromB64u, importKeyB64u, AesKey } from "./crypto";
 
 // /r/<slug>#<keyB64>: the sender-facing reverse upload page. The slug picks
 // the inbox, the fragment key is required — uploads are encrypted client-side
@@ -73,14 +74,9 @@ export async function reverseView(): Promise<void> {
   }
   rslug = raw;
   const keyB64 = location.hash.slice(1);
-  if (!/^[A-Za-z0-9_-]{10,}$/.test(keyB64)) {
-    rfail("This drop link lost its decryption key - only the intact link (with the part after #) can upload.");
-    return;
-  }
-  history.replaceState(null, "", location.pathname); // strip the key from the bar
-  let meta: { maxSize: number; expires: number };
+  let meta: { maxSize: number; expires: number; salt?: string; check?: string };
   try {
-    meta = (await (await fetch("/api/rshare/" + rslug)).json()) as { maxSize: number; expires: number };
+    meta = (await (await fetch("/api/rshare/" + rslug)).json()) as { maxSize: number; expires: number; salt?: string; check?: string };
   } catch {
     rfail("The collector could not be reached.");
     return;
@@ -89,12 +85,68 @@ export async function reverseView(): Promise<void> {
     rfail("No reverse share with this slug exists (or it expired).");
     return;
   }
+  if (keyB64 && meta.salt) {
+    rfail("This drop link is passphrase-protected — open it WITHOUT the # part and use the collector's passphrase.");
+    return;
+  }
   const cap = meta.maxSize;
   const expires = new Date(meta.expires * 1000);
   $("rmeta").textContent =
     "files up to " + humanSize(cap) + " · link lives until " + expires.toLocaleDateString() + " " + expires.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  // drop zone + picker, mirroring the compose flow (files only, no note/pass)
+  // passphrase uplinks: unlock first — the AES key derives locally from the
+  // passphrase + public salt and is verified against the sealed check token
+  if (meta.salt) {
+    if (keyB64) {
+      rfail("This drop link is passphrase-protected — open it without the # part and use the collector's passphrase.");
+      return;
+    }
+    history.replaceState(null, "", location.pathname);
+    const unlock = $("runlock") as HTMLElement;
+    unlock.classList.remove("hidden");
+    const passIn = $("runlockpass") as HTMLInputElement;
+    passIn.focus();
+    const tryUnlock = async (): Promise<void> => {
+      const err = $("runlockerr") as HTMLElement;
+      err.classList.add("hidden");
+      const key = await deriveKey(passIn.value, bytesFromB64u(meta.salt as string));
+      let ok = false;
+      try {
+        ok = (await open_(meta.check as string, key)) === "zeropaste-rshare";
+      } catch {
+        ok = false; // malformed verifier or wrong key
+      }
+      if (!ok) {
+        err.textContent = "Wrong passphrase.";
+        err.classList.remove("hidden");
+        passIn.select();
+        return;
+      }
+      unlock.classList.add("hidden");
+      await startBody(key, meta.expires, cap, meta.salt as string);
+    };
+    $("runlockbtn").addEventListener("click", () => void tryUnlock());
+    passIn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") void tryUnlock();
+    });
+    return;
+  }
+  if (keyB64) {
+    // fragment mode: validate the key shape, then strip it from the bar
+    if (!/^[A-Za-z0-9_-]{10,}$/.test(keyB64)) {
+      rfail("This drop link lost its decryption key - only the intact link (with the part after #) can upload.");
+      return;
+    }
+    history.replaceState(null, "", location.pathname);
+    await startBody(await importKeyB64u(keyB64), meta.expires, cap);
+    return;
+  }
+  rfail("This drop link lost its decryption key - only the intact link (with the part after #) can upload.");
+}
+
+// drop card: listeners + send pipeline; key arrives unlocked (imported or
+// passphrase-derived), salt is set when the pass came from the passphrase flow
+async function startBody(key: AesKey, expires: number, cap: number, salt?: string): Promise<void> {
   const drop = $("rdrop") as HTMLElement;
   const fileinput = $("rfileinput") as HTMLInputElement;
   drop.addEventListener("click", () => fileinput.click());
@@ -143,10 +195,11 @@ export async function reverseView(): Promise<void> {
         const res = await uploadBundle({
           note: "",
           files: picked,
-          ttl: ttlFor(meta.expires),
+          ttl: ttlFor(expires),
           burn: false,
           pass: "",
-          preKeyB64: keyB64,
+          preKey: key,
+          preSalt: salt,
           signal: ac.signal,
           onProgress: (pct, phase) => {
             fill.style.width = pct + "%";

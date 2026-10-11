@@ -65,6 +65,8 @@ type inbox struct {
 	MaxSize int64       `json:"maxSize"`
 	Expires int64       `json:"expires"`
 	Created int64       `json:"created"`
+	Salt    string      `json:"salt,omitempty"`  // set → passphrase uplink: senders derive from salt + passphrase
+	Check   string      `json:"check,omitempty"` // sealed verifier so senders detect a wrong passphrase
 	Uploads []inboxItem `json:"uploads"`
 }
 
@@ -117,6 +119,8 @@ func (s *sessions) rshareCreate(dir string) http.HandlerFunc {
 			Slug    string `json:"slug"`
 			TTL     string `json:"ttl"`
 			MaxSize int64  `json:"maxSize"`
+			Salt    string `json:"salt"`  // optional: passphrase uplink (server stores the public salt only)
+			Check   string `json:"check"` // optional: sealed verifier, must pair with salt
 		}
 		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
 			httpError(w, 400, "invalid request body")
@@ -124,6 +128,21 @@ func (s *sessions) rshareCreate(dir string) http.HandlerFunc {
 		}
 		if !validSlug(q.Slug) {
 			httpError(w, 400, "slug must be 3-32 chars: a-z, 0-9, '-' or '_'")
+			return
+		}
+		if q.Salt != "" {
+			b, err := base64.RawURLEncoding.DecodeString(q.Salt)
+			if err != nil || len(b) < 8 || len(b) > 32 {
+				httpError(w, 400, "salt must be 8-32 raw bytes, base64url")
+				return
+			}
+			cb, err := base64.RawURLEncoding.DecodeString(q.Check)
+			if err != nil || len(cb) < 12+16 { // iv + tag of the sealed verifier
+				httpError(w, 400, "check verifier missing or malformed")
+				return
+			}
+		} else if q.Check != "" {
+			httpError(w, 400, "check verifier requires salt")
 			return
 		}
 		ttl, ok := parseTTL(q.TTL)
@@ -149,7 +168,7 @@ func (s *sessions) rshareCreate(dir string) http.HandlerFunc {
 			httpError(w, 403, "share limit reached for this account")
 			return
 		}
-		bi := inbox{Slug: q.Slug, Owner: i.ID, MaxSize: q.MaxSize, Expires: time.Now().Add(ttl).Unix(), Created: time.Now().Unix(), Uploads: []inboxItem{}}
+		bi := inbox{Slug: q.Slug, Owner: i.ID, MaxSize: q.MaxSize, Expires: time.Now().Add(ttl).Unix(), Created: time.Now().Unix(), Salt: q.Salt, Check: q.Check, Uploads: []inboxItem{}}
 		if err := saveInbox(dir, &bi); err != nil {
 			log.Print(err)
 			httpError(w, 500, "could not store reverse share")
@@ -208,7 +227,7 @@ func rshareList(dir string, s *sessions) http.HandlerFunc {
 			for _, u := range bi.Uploads {
 				total += u.Size
 			}
-			out = append(out, map[string]any{"slug": bi.Slug, "maxSize": bi.MaxSize, "expires": bi.Expires, "uploads": len(bi.Uploads), "bytes": total, "items": bi.Uploads})
+			out = append(out, map[string]any{"slug": bi.Slug, "maxSize": bi.MaxSize, "expires": bi.Expires, "uploads": len(bi.Uploads), "bytes": total, "items": bi.Uploads, "pass": bi.Salt != ""})
 		}
 		respond(w, 200, out)
 	}
@@ -224,7 +243,7 @@ func rshareMeta(dir string) http.HandlerFunc {
 			httpError(w, 404, "no such reverse share")
 			return
 		}
-		respond(w, 200, map[string]any{"maxSize": bi.MaxSize, "expires": bi.Expires})
+		respond(w, 200, map[string]any{"maxSize": bi.MaxSize, "expires": bi.Expires, "salt": bi.Salt, "check": bi.Check})
 	}
 }
 

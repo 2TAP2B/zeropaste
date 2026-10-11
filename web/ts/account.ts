@@ -1,5 +1,5 @@
 import { $ } from "./dom";
-import { b64uFromBytes, bytesFromB64u } from "./crypto";
+import { b64uFromBytes, bytesFromB64u, deriveKey, seal } from "./crypto";
 import { humanSize } from "./ui";
 
 // Passkey account flows + the active-shares dashboard, both passkey-only.
@@ -371,17 +371,30 @@ export async function dashboardPage(): Promise<void> {
         const slug = ($("revslug") as HTMLInputElement).value.trim().toLowerCase();
         const ttl = ($("revttl") as HTMLInputElement).value.trim();
         const mb = Number(($("revsize") as HTMLInputElement).value);
-        const keyB64 = freshKeyB64();
+        const pass = ($("revpass") as HTMLInputElement).value;
+        let salt = "";
+        let check = "";
+        let keyB64 = "";
+        if (pass) {
+          // passphrase uplink: the server stores the public salt + a sealed
+          // verifier; the passphrase itself never leaves this tab
+          salt = b64uFromBytes(crypto.getRandomValues(new Uint8Array(16)));
+          const key = await deriveKey(pass, bytesFromB64u(salt));
+          check = await seal(key, "zeropaste-rshare");
+        } else {
+          keyB64 = freshKeyB64(); // fragment mode: the uplink rides the key
+        }
         const res = await fetch("/api/rshare", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slug, ttl, maxSize: Math.round(mb * 1024 * 1024) }),
+          body: JSON.stringify({ slug, ttl, maxSize: Math.round(mb * 1024 * 1024), salt, check }),
         });
         if (!res.ok) {
           throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "create failed");
         }
-        fragPut("rv:" + slug, keyB64);
+        if (keyB64) fragPut("rv:" + slug, keyB64); // fragment mode only
         ($("revslug") as HTMLInputElement).value = "";
+        ($("revpass") as HTMLInputElement).value = "";
         await renderRshares();
       } catch (e) {
         dashError(e instanceof Error ? e.message : "create failed");
@@ -431,6 +444,7 @@ interface RevRow {
   expires: number;
   uploads: number;
   bytes: number;
+  pass?: boolean; // passphrase uplink: bare links, no stashed fragment
   items: { id: string; size: number; created: number }[];
 }
 
@@ -448,7 +462,9 @@ async function renderRshares(): Promise<void> {
     return;
   }
   for (const r of rows) {
-    const keyB64 = fragGet("rv:" + r.slug);
+    // pass mode never stashes a fragment; ignore leftover stash entries from
+    // a same-slug fragment-mode predecessor WIPED and recreated with a pass
+    const keyB64 = r.pass ? "" : fragGet("rv:" + r.slug);
     const row = document.createElement("div");
     row.className = "srow";
     const slug = document.createElement("span");
@@ -456,13 +472,19 @@ async function renderRshares(): Promise<void> {
     slug.textContent = "/" + r.slug;
     const stats = document.createElement("span");
     stats.className = "swhen";
-    stats.textContent = r.uploads === 0 ? "awaiting files" : `${r.uploads} file${r.uploads === 1 ? "" : "s"} · ${humanSize(r.bytes)}`;
+    stats.textContent = r.uploads === 0 ? (r.pass ? "awaiting files · passphrase mode" : "awaiting files") : `${r.uploads} file${r.uploads === 1 ? "" : "s"} · ${humanSize(r.bytes)}`;
     const exp = document.createElement("span");
     exp.className = "susers";
     exp.textContent = expiryText(r.expires);
     const up = document.createElement("a");
     up.className = "rowcopy";
-    if (keyB64) {
+    if (r.pass) {
+      // passphrase mode: the uplink is a clean bare link; the owner still
+      // needs the passphrase (theirs to remember) — open links are /p/<id>
+      up.href = location.origin + "/r/" + r.slug;
+      up.textContent = "drop link";
+      row.title = "Share the passphrase over another channel.";
+    } else if (keyB64) {
       up.href = location.origin + "/r/" + r.slug + "#" + keyB64;
       up.textContent = "drop link";
     } else {
@@ -471,19 +493,20 @@ async function renderRshares(): Promise<void> {
       up.className = "rowcopy missing";
     }
     const cp = document.createElement("button");
-    if (keyB64) {
-      cp.type = "button";
-      cp.className = "rowcopy";
-      cp.setAttribute("aria-label", "Copy drop link");
-      cp.textContent = "copy link";
-      cp.addEventListener("click", () => {
-        void (async () => {
-          await navigator.clipboard.writeText(location.origin + "/r/" + r.slug + "#" + keyB64);
-          cp.textContent = "copied!";
-          setTimeout(() => (cp.textContent = "copy link"), 1200);
-        })();
-      });
-    }
+    cp.type = "button";
+    cp.className = "rowcopy";
+    cp.setAttribute("aria-label", "Copy drop link");
+    cp.textContent = "copy link";
+    cp.addEventListener("click", () => {
+      void (async () => {
+        const url = r.pass
+          ? location.origin + "/r/" + r.slug
+          : location.origin + "/r/" + r.slug + "#" + keyB64;
+        await navigator.clipboard.writeText(url);
+        cp.textContent = "copied!";
+        setTimeout(() => (cp.textContent = "copy link"), 1200);
+      })();
+    });
     const del = document.createElement("button");
     del.type = "button";
     del.className = "rowdel";
@@ -508,18 +531,25 @@ async function renderRshares(): Promise<void> {
       })();
     });
     row.append(slug, stats, exp, up);
-    if (keyB64) row.append(cp);
+    if (!r.pass && keyB64) row.append(cp);
+    if (r.pass) {
+      const badge = document.createElement("span");
+      badge.className = "chipmeta";
+      badge.textContent = "passphrase";
+      row.append(badge);
+    }
     row.append(del);
     box.append(row);
-    // arrivals: one link each so the owner can open (decrypt happens via the uplink key)
+    // arrivals: fragment mode links carry the stashed key; passphrase mode
+    // links are bare /p/<id> — the standard unlock flow opens them
     for (const it of r.items) {
       const ar = document.createElement("div");
       ar.className = "srow revarrival";
       const fid = document.createElement("a");
       fid.textContent = "/p/" + it.id.slice(0, 6) + "…";
-      fid.href = keyB64 ? location.origin + "/p/" + it.id + "#" + keyB64 : "#";
+      fid.href = keyB64 ? location.origin + "/p/" + it.id + "#" + keyB64 : location.origin + "/p/" + it.id;
       fid.title = it.id;
-      if (!keyB64) fid.className = "missing";
+      if (!keyB64 && !r.pass) fid.className = "missing";
       const fsize = document.createElement("span");
       fsize.className = "swhen";
       fsize.textContent = it.size > 0 ? humanSize(it.size) : "text";

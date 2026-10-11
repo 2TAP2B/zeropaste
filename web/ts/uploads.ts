@@ -25,6 +25,8 @@ export interface UploadOpts {
   burn: boolean;
   pass: string;
   preKeyB64?: string; // upload under a prepared key (reverse-share uplinks)
+  preKey?: AesKey; // import-free variant (passphrase-derived uplink)
+  preSalt?: string; // salt stored in the paste meta (passphrase-derived uplink)
   onProgress?: (pct: number, phase: "encrypt" | "upload" | "finish") => void;
   onSession?: (uploadId: string) => void; // lets callers abort/delete the temp session
   signal?: AbortSignal;
@@ -57,8 +59,23 @@ export async function uploadBundle(o: UploadOpts): Promise<UploadResult> {
   }
   let key: AesKey;
   let keyB64 = "";
-  const { salt, saltB64 } = saltIfNeeded(o.pass);
-  if (o.preKeyB64) {
+  let saltB64 = "";
+  let salt: Uint8Array<ArrayBuffer> | undefined;
+  if (o.preSalt) {
+    // reverse passphrase uplink: the inbox salt is reused so each uploaded
+    // paste carries it and the collector re-opens via the normal passphrase flow
+    salt = bytesFromB64u(o.preSalt);
+    saltB64 = o.preSalt;
+    if (o.pass) throw new Error("a passphrase cannot be combined with a prepared salt");
+  } else {
+    const s = saltIfNeeded(o.pass);
+    if (s.salt) salt = s.salt;
+    saltB64 = s.saltB64 ?? "";
+  }
+  if (o.preKey) {
+    if (o.pass) throw new Error("a passphrase cannot be combined with a prepared key");
+    key = o.preKey;
+  } else if (o.preKeyB64) {
     // reverse-share flow: the uplink fragment carries this key; reuse it so
     // the collector can decrypt
     if (o.pass) throw new Error("a passphrase cannot be combined with a pre-baked key");
@@ -78,7 +95,7 @@ export async function uploadBundle(o: UploadOpts): Promise<UploadResult> {
   const req = await fetch("/api/uploads", {
     method: "POST",
     headers: jsonHeaders(),
-    body: JSON.stringify({ len: blob.length, ttl: o.ttl, burn: o.burn, salt: saltB64 ?? "" }),
+    body: JSON.stringify({ len: blob.length, ttl: o.ttl, burn: o.burn, salt: saltB64 }),
   });  if (!req.ok) {
     throw new Error(((await req.json().catch(() => ({}))) as { error?: string }).error ?? "upload init failed");
   }
