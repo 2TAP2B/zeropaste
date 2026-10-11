@@ -528,12 +528,7 @@ async function renderRshares(): Promise<void> {
     slug.textContent = "/" + r.slug;
     const stats = document.createElement("span");
     stats.className = "revmeta";
-    stats.textContent =
-      (r.pass ? "passphrase mode · " : "") +
-      (r.uploads === 0
-        ? "awaiting files"
-        : `${r.uploads} file${r.uploads === 1 ? "" : "s"} · ${humanSize(r.bytes)}`) +
-      ` · expires ${expiryText(r.expires).replace(/^in /, "")}`;
+    stats.textContent = r.uploads === 0 ? "awaiting files" : `${r.uploads} file${r.uploads === 1 ? "" : "s"}`;
     const acts = document.createElement("span");
     acts.className = "revacts";
     const cp = iconBtn("Copy drop link", IC.copy);
@@ -562,9 +557,18 @@ async function renderRshares(): Promise<void> {
     head.append(chev, slug, stats, acts);
     row.append(head);
 
-    // collapsible detail: uplink row + arrivals
+    // collapsible detail: uplink row + full meta + arrivals
     const detail = document.createElement("div");
     detail.className = "revdetail hidden";
+    const metaRow = document.createElement("div");
+    metaRow.className = "srow revup";
+    const metaInfo = document.createElement("span");
+    metaInfo.className = "revuplink";
+    metaInfo.textContent =
+      (r.pass ? "passphrase mode (share the passphrase over another channel)" : "key-link mode") +
+      ` · max ${humanSize(r.maxSize)} · expires ${expiryText(r.expires).replace(/^in /, "")}`;
+    metaRow.append(metaInfo);
+    detail.append(metaRow);
     const ul = document.createElement("div");
     ul.className = "srow revup";
     const lk = document.createElement("span");
@@ -683,53 +687,43 @@ async function loadDash(): Promise<void> {
     return;
   }
   for (const r of rows) {
+    // same row language as the reverse pane: label link + meta + icon actions
     const row = document.createElement("div");
-    row.className = "srow";
+    row.className = "revrow";
     const link = document.createElement("a");
+    link.className = "revslug";
     link.href = shareURL(r);
-    link.textContent = "/p/" + r.id.slice(0, 6) + "…";
-    const kind = document.createElement("span");
-    kind.textContent = r.kind === "bundle" ? "files" : "text";
-    kind.className = "skind";
-    const views = document.createElement("span");
-    views.textContent = (r.views ?? 0) + " views";
-    views.className = "susers";
-    const alive = document.createElement("span");
-    alive.textContent = r.burn ? "burn after reading" : expiryText(r.expires);
-    alive.className = "swhen";
-    const cp = document.createElement("button");
-    cp.type = "button";
-    cp.className = "rowcopy";
-    cp.setAttribute("aria-label", "Copy share link");
-    cp.textContent = "copy link";
-    cp.addEventListener("click", () => {
-      void (async () => {
-        await navigator.clipboard.writeText(shareURL(r));
-        cp.textContent = "copied!";
-        setTimeout(() => (cp.textContent = "copy link"), 1200);
-      })();
-    });
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "rowdel";
-    del.setAttribute("aria-label", "Delete share " + r.id);
-    del.textContent = "Delete";
+    link.textContent = "open share";
+    link.title = shareURL(r);
+    const meta = document.createElement("span");
+    meta.className = "revmeta";
+    meta.textContent =
+      (r.kind === "bundle" ? "files" : "text") +
+      ` · ${r.views ?? 0} view${(r.views ?? 0) === 1 ? "" : "s"}` +
+      (r.burn ? " · burn after reading" : ` · expires ${expiryText(r.expires).replace(/^in /, "")}`);
+    const acts = document.createElement("span");
+    acts.className = "revacts";
+    const cp = iconBtn("Copy share link", IC.copy);
+    cp.addEventListener("click", () => void copy(shareURL(r), cp));
+    const del = iconBtn("Delete share", IC.del, "rowicon danger");
     del.addEventListener("click", () => {
       if (!confirm("Delete this share? The link stops working for everyone, including you.")) return;
       del.disabled = true;
-      del.textContent = "deleting…";
       void (async () => {
         const res = await fetch("/api/paste/" + r.id, { method: "DELETE" });
         if (!res.ok) {
           del.disabled = false;
-          del.textContent = "Delete";
           dashError("delete failed - the share may already be gone");
           return;
         }
         await loadDash(); // rows recompute live; the deleted one is gone
       })();
     });
-    row.append(link, kind, views, alive, cp, del);
+    acts.append(cp, del);
+    const head = document.createElement("div");
+    head.className = "revhead";
+    head.append(link, meta, acts);
+    row.append(head);
     rowsBox.append(row);
   }
 }
