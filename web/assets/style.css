@@ -416,13 +416,21 @@
     box-shadow: var(--shadow);
   }
   #quickstart::backdrop { background: rgb(0 0 0 / .55); }
+  #quickstart .qsclose {
+    position: absolute; top: .55rem; right: .55rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 2rem; height: 2rem; padding: .45rem;
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--muted); cursor: pointer;
+  }
+  #quickstart .qsclose:hover { color: var(--danger); border-color: var(--danger); }
   #quickstart b { display: block; margin-bottom: .75rem; color: var(--accent); font-weight: 700; }
   #quickstart .qs-label { font-size: .75rem; color: var(--muted); margin: .75rem 0 .25rem; }
   #quickstart .qs-block { position: relative; }
   #quickstart pre {
     background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
     padding: .6rem 2.75rem .6rem .75rem; font-size: .75rem; line-height: 1.5;
-    white-space: pre-wrap; word-break: break-word;
+    white-space: pre; overflow-x: auto;
   }
   #quickstart .copybtn { top: .35rem; right: .35rem; }
   #quickstart .copybtn svg { width: 12px; height: 12px; }

@@ -8,9 +8,9 @@
 <meta property="og:description" content="share secrets, not plaintext - zero-knowledge pastes, encrypted in your browser">
 <meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.8.4" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.8.4" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.8.4">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.8.5" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.8.5" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.8.5">
 </head>
 <body>
 <main>
@@ -281,6 +281,9 @@
 
   <!-- quick-start lightbox: native popover, zero JS to open -->
   <div id="quickstart" popover>
+    <button type="button" class="qsclose" id="qsclose" popovertarget="quickstart" popovertargetaction="hide" aria-label="Close quick start">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+    </button>
     <b>self-host in 30 seconds</b>
     <div class="qs-block">
       <button type="button" class="copybtn" aria-label="Copy docker command" data-copy="qs-run">
@@ -288,7 +291,7 @@
       </button>
       <pre><code id="qs-run">docker run -d --name zeropaste -p 8080:8080 -v paste-data:/data ghcr.io/2tap2b/zeropaste:latest</code></pre>
     </div>
-    <div class="qs-label">or compose.yaml - all knobs commented, paste the file and start</div>
+    <div class="qs-label">or compose.yaml - edit the values, then start</div>
     <div class="qs-block">
       <button type="button" class="copybtn" aria-label="Copy compose file" data-copy="qs-compose">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -301,15 +304,15 @@
     volumes:
       - paste-data:/data
     restart: unless-stopped
-    # environment:                  # all optional; every line commented = fully
-    #   CREATE_KEY: "change-me"        # public instance (site passphrase for creates)
-    #   USER_ACCOUNTS: "true"          # "false" = no accounts at all
-    #   USER_REGISTRATION: "true"      # "false" = sign-up closes after the first account
-    #   MAX_TTL_DAYS: "30"             # share-time ceiling in days
-    #   MAX_SHARES_PER_ACCOUNT: "0"    # active shares per account; 0 = unlimited
-    #   MAX_UPLOAD: "104857600"        # bytes per share; default 100 MiB
-    #   REG_OPEN: "false"              # static registration lock
-    #   CHUNK: "8388608"               # bytes per upload chunk
+    environment:
+      CREATE_KEY: "change-me"          # site passphrase in front of creates; delete the line for a fully public instance
+      USER_ACCOUNTS: "true"            # "false" = no accounts at all
+      USER_REGISTRATION: "true"        # "false" = sign-up closes after the first account
+      MAX_TTL_DAYS: "30"               # share-time ceiling in days
+      MAX_SHARES_PER_ACCOUNT: "0"      # active shares per account; 0 = unlimited
+      MAX_UPLOAD: "104857600"          # bytes per share; default 100 MiB
+      REG_OPEN: "false"                # static registration lock
+      CHUNK: "8388608"                 # bytes per upload chunk
 volumes:
   paste-data:</code></pre>
     </div>
@@ -319,6 +322,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.8.4"></script>
+<script src="/assets/app.js?v=0.8.5"></script>
 </body>
 </html>
