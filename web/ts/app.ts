@@ -335,3 +335,12 @@ if (location.search.includes("selfcheck")) {
   void gateFlow();
   void bootAccount();
 }
+
+// footer quickstart: highlight the copy blocks with the embededded highlight.js
+// (static strings; the theme sheets already carry the colors)
+const qsRunCode = document.getElementById("qs-run");
+const qsCompose = document.getElementById("qs-compose");
+if (window.hljs && qsRunCode && qsCompose) {
+  qsRunCode.innerHTML = window.hljs.highlight(qsRunCode.textContent ?? "", { language: "bash" }).value;
+  qsCompose.innerHTML = window.hljs.highlight(qsCompose.textContent ?? "", { language: "yaml" }).value;
+}

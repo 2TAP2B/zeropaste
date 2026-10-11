@@ -87,11 +87,16 @@
   .accrow { display: flex; gap: .6rem; flex-wrap: wrap; margin: .5rem 0; }
   #accpanel .hint { margin-top: .5rem; }
   .dashhead {
+    position: relative;
     display: flex; justify-content: space-between; align-items: center;
     margin-bottom: .6rem;
   }
   .dashhead b { color: var(--text); }
-  .dashtabs { display: flex; gap: .35rem; }
+  .dashtabs {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    display: flex; gap: .35rem;
+  }
   .dashtab {
     font-size: .82rem; padding: .4rem .85rem; border-radius: 999px;
     background: none; border: 1px solid var(--border); color: var(--muted);
@@ -119,7 +124,10 @@
     text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .revslug:hover { color: var(--accent); }
-  .revmeta { flex: 1 1 auto; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+  .revmeta {
+    flex: 1 1 auto; color: var(--muted); min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .revacts { display: flex; align-items: center; gap: .35rem; flex: 0 0 auto; }
   .rowicon {
     display: inline-flex; align-items: center; justify-content: center;
@@ -438,7 +446,13 @@
     /* tabs line up BELOW the new paste / logout line on phones */
     .dashhead { flex-wrap: wrap; }
     .dashacts { order: 1; width: 100%; justify-content: flex-end; }
-    .dashtabs { order: 2; width: 100%; }
+    .dashtabs { order: 2; width: 100%; position: static; transform: none; justify-content: center; }
+    .reviconlink {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.9rem; height: 1.9rem; padding: .4rem;
+      color: var(--text); cursor: pointer; flex: 0 0 auto;
+    }
+    .reviconlink svg { width: 1.05rem; height: 1.05rem; }
     .unlockbox { padding-top: .25rem; }
     .unlockrow { flex-direction: column; }
     .unlockrow .primary { width: 100%; }
@@ -448,7 +462,6 @@
     #imgbox img { max-width: 84vw; }
     .dashedit .accrow { flex-wrap: wrap; }
     #dashname { width: 100%; flex: 1 1 100%; }
-    .dashacts { width: 100%; justify-content: flex-end; }
     .readerror { padding: 1.5rem .25rem; }
     /* header: brand alone on one line, controls right */
     .brand span { display: none; }

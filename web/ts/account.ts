@@ -687,20 +687,24 @@ async function loadDash(): Promise<void> {
     return;
   }
   for (const r of rows) {
-    // same row language as the reverse pane: label link + meta + icon actions
+    // same row language as the reverse pane: open-with-arrow icon + compact
+    // meta + icon actions; fits one line on phones
     const row = document.createElement("div");
     row.className = "revrow";
     const link = document.createElement("a");
-    link.className = "revslug";
+    link.className = "reviconlink";
     link.href = shareURL(r);
-    link.textContent = "open share";
-    link.title = shareURL(r);
+    link.title = "Open share (" + (r.kind === "bundle" ? "files" : "text") + ")";
+    link.setAttribute("aria-label", "Open share");
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.innerHTML = IC.open; // static icon markup only
     const meta = document.createElement("span");
     meta.className = "revmeta";
     meta.textContent =
       (r.kind === "bundle" ? "files" : "text") +
       ` · ${r.views ?? 0} view${(r.views ?? 0) === 1 ? "" : "s"}` +
-      (r.burn ? " · burn after reading" : ` · expires ${expiryText(r.expires).replace(/^in /, "")}`);
+      (r.burn ? " · burn after reading" : ` · ${expiryText(r.expires).replace(/^in /, "")}`);
     const acts = document.createElement("span");
     acts.className = "revacts";
     const cp = iconBtn("Copy share link", IC.copy);
