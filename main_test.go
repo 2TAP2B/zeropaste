@@ -804,6 +804,137 @@ func mustReq(cookie string) *http.Request {
 	return r
 }
 
+func TestReverseShares(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+	pget := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set("Cookie", cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	pdel := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("DELETE", path, nil)
+		req.Header.Set("Cookie", cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	ppost := func(path, body, auth string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", path, strings.NewReader(body))
+		if auth != "" {
+			req.Header.Set("Authorization", "Bearer "+auth)
+		} else {
+			req.Header.Set("Cookie", cookie)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// create: happy path + validation
+	if rec := ppost("/api/rshare", `{"slug":"trip-photos","ttl":"7d","maxSize":104857600}`, ""); rec.Code != 200 {
+		t.Fatalf("create inbox: got %d %s", rec.Code, rec.Body)
+	}
+	if rec := ppost("/api/rshare", `{"slug":"trip-photos","ttl":"7d","maxSize":1}`, ""); rec.Code != 409 {
+		t.Fatalf("slug collision: got %d, want 409", rec.Code)
+	}
+	if rec := ppost("/api/rshare", `{"slug":"ab","ttl":"7d","maxSize":1}`, ""); rec.Code != 400 {
+		t.Fatalf("short slug: got %d, want 400", rec.Code)
+	}
+	if rec := ppost("/api/rshare", `{"slug":"wrong!slug","ttl":"7d","maxSize":1}`, ""); rec.Code != 400 {
+		t.Fatalf("bad slug charset: got %d, want 400", rec.Code)
+	}
+	if rec := ppost("/api/rshare", `{"slug":"week","ttl":"31d","maxSize":1}`, ""); rec.Code != 400 {
+		t.Fatalf("ttl beyond ceiling: got %d, want 400", rec.Code)
+	}
+	if rec := ppost("/api/rshare", `{"slug":"huge","ttl":"1d","maxSize":68719476736}`, ""); rec.Code != 400 {
+		t.Fatalf("maxSize beyond blob cap: got %d, want 400", rec.Code)
+	}
+	// list shows the owned inbox
+	rec := pget("/api/rshares")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"slug":"trip-photos"`) || !strings.Contains(rec.Body.String(), `"uploads":0`) {
+		t.Fatalf("list: got %d %s", rec.Code, rec.Body)
+	}
+
+	// a friend uploads a paste through the standard endpoint, then registers it
+	reg := ppost("/api/paste", `{"data":"`+strings.Repeat("A", 40)+`","ttl":"7d"}`, "")
+	if reg.Code != 200 {
+		t.Fatalf("paste create: %d %s", reg.Code, reg.Body)
+	}
+	var pr struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(reg.Body.Bytes(), &pr)
+	tripPaste := pr.ID
+	if rec := ppost("/api/rshare/trip-photos/in", `{"id":"`+pr.ID+`"}`, "skip-cookie"); rec.Code != 200 {
+		t.Fatalf("register upload: got %d %s", rec.Code, rec.Body)
+	}
+	if rec := ppost("/api/rshare/trip-photos/in", `{"id":"`+pr.ID+`"}`, "skip-cookie"); rec.Code != 200 {
+		t.Fatalf("idempotent re-register: got %d %s", rec.Code, rec.Body)
+	}
+	rec = pget("/api/rshares")
+	if !strings.Contains(rec.Body.String(), `"uploads":1`) {
+		t.Fatalf("list upload count: %s", rec.Body)
+	}
+	// public meta hides inventory/owner
+	rec = get(h, "/api/rshare/trip-photos")
+	if !strings.Contains(rec.Body.String(), `"maxSize"`) || strings.Contains(rec.Body.String(), "owner") {
+		t.Fatalf("public meta leak: %s", rec.Body)
+	}
+	// unknown upload ids rejected
+	if rec := ppost("/api/rshare/trip-photos/in", `{"id":"AAAAAAAAAAAA"}`, "skip-cookie"); rec.Code != 404 {
+		t.Fatalf("unknown upload: got %d, want 404", rec.Code)
+	}
+	// oversized upload rejected by inbox cap: MAX_UPLOAD override + fresh inbox
+	oldCap := maxBlobBytes
+	maxBlobBytes = 1 << 20
+	t.Cleanup(func() { maxBlobBytes = oldCap })
+	if rec := ppost("/api/rshare", `{"slug":"small","ttl":"1d","maxSize":65536}`, ""); rec.Code != 200 {
+		t.Fatalf("small inbox create: %d %s", rec.Code, rec.Body)
+	}
+	reg = ppost("/api/paste", `{"data":"`+strings.Repeat("A", 40)+`","ttl":"1h"}`, "")
+	if reg.Code != 200 {
+		t.Fatalf("paste create small: %d", reg.Code)
+	}
+	_ = json.Unmarshal(reg.Body.Bytes(), &pr)
+	// the bundle cap counts blob Len: fake a bundle-sized paste on disk
+	if err := os.WriteFile(filepath.Join(dir, pr.ID+".json"), []byte(`{"expires":4102444800,"len":1048576}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rec := ppost("/api/rshare/small/in", `{"id":"`+pr.ID+`"}`, "skip-cookie"); rec.Code != 403 {
+		t.Fatalf("oversized upload: got %d, want 403", rec.Code)
+	}
+
+	// delete with contents wipes the inbox and the registered paste
+	if rec := pdel("/api/rshare/trip-photos"); rec.Code != 200 {
+		t.Fatalf("delete inbox: got %d %s", rec.Code, rec.Body)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "inboxes", "trip-photos.json")); !os.IsNotExist(err) {
+		t.Fatalf("inbox file survived delete: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, tripPaste+".json")); !os.IsNotExist(err) {
+		t.Fatalf("registered paste survived inbox delete: %v", err)
+	}
+	if rec := pget("/api/rshares"); strings.Contains(rec.Body.String(), "trip-photos") {
+		t.Fatalf("deleted inbox still listed: %s", rec.Body)
+	}
+	// own second inbox deletes; a missing one 404s
+	if rec := pdel("/api/rshare/small"); rec.Code != 200 {
+		t.Fatalf("delete own second inbox: %d %s", rec.Code, rec.Body)
+	}
+	if rec := pdel("/api/rshare/small"); rec.Code != 404 {
+		t.Fatalf("double delete: got %d, want 404", rec.Code)
+	}
+	rec = postTo(t, h, "/api/rshare", `{"slug":"anontry","ttl":"1d","maxSize":1}`, "")
+	if rec.Code != 401 {
+		t.Fatalf("anon create: got %d, want 401", rec.Code)
+	}
+}
+
 func TestSharesRecordAndList(t *testing.T) {
 	dir := t.TempDir()
 	s := testSession(t, dir)

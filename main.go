@@ -47,6 +47,259 @@ var indexHTML []byte
 //go:embed web/assets
 var assetFS embed.FS
 
+// ---- reverse share inbox: data/inboxes/<slug>.json, one file per drop ----
+// 0600 like everything else. The inbox is METADATA (ids, sizes, expiry): file
+// contents are normal encrypted pastes/bundles uploaded through the standard
+// create/upload endpoints with the share key riding the upload link fragment,
+// so the zero-knowledge contract holds unchanged.
+
+type inboxItem struct {
+	ID      string `json:"id"`
+	Size    int64  `json:"size"`
+	Created int64  `json:"created"`
+}
+
+type inbox struct {
+	Slug    string      `json:"slug"`
+	Owner   string      `json:"owner"`
+	MaxSize int64       `json:"maxSize"`
+	Expires int64       `json:"expires"`
+	Created int64       `json:"created"`
+	Uploads []inboxItem `json:"uploads"`
+}
+
+func inboxesAttachment(dir string) string {
+	return filepath.Join(dir, "inboxes")
+}
+
+func validSlug(s string) bool {
+	if len(s) < 3 || len(s) > 32 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func loadInbox(dir, slug string) *inbox {
+	b, err := os.ReadFile(filepath.Join(inboxesAttachment(dir), slug+".json"))
+	if err != nil {
+		return nil
+	}
+	var bi inbox
+	if json.Unmarshal(b, &bi) != nil {
+		return nil
+	}
+	return &bi
+}
+
+func saveInbox(dir string, bi *inbox) error {
+	p := filepath.Join(inboxesAttachment(dir), bi.Slug+".json")
+	b, _ := json.Marshal(bi)
+	return os.WriteFile(p, b, 0o600)
+}
+
+// rshareCreate: POST /api/rshare (session required). Body {slug, ttl, maxSize}.
+// The uplink key is generated client-side and lives in the uplink fragment.
+func (s *sessions) rshareCreate(dir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		i := s.identFrom(r)
+		if i == nil {
+			httpError(w, 401, "sign in to create a reverse share")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+		var q struct {
+			Slug    string `json:"slug"`
+			TTL     string `json:"ttl"`
+			MaxSize int64  `json:"maxSize"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+			httpError(w, 400, "invalid request body")
+			return
+		}
+		if !validSlug(q.Slug) {
+			httpError(w, 400, "slug must be 3-32 chars: a-z, 0-9, '-' or '_'")
+			return
+		}
+		ttl, ok := parseTTL(q.TTL)
+		if !ok || ttl < time.Minute || ttl > time.Duration(maxTTL)*24*time.Hour {
+			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", maxTTL))
+			return
+		}
+		if q.MaxSize < 1 || q.MaxSize > maxBlobBytes {
+			httpError(w, 400, fmt.Sprintf("max file size out of range (1 to %d bytes)", maxBlobBytes))
+			return
+		}
+		att := inboxesAttachment(dir)
+		if err := os.MkdirAll(att, 0o700); err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not open inbox area")
+			return
+		}
+		if loadInbox(dir, q.Slug) != nil { // slugs are globally unique across owners
+			httpError(w, 409, "that slug is already taken")
+			return
+		}
+		if maxShares > 0 && s.inboxesOwned(dir, i.ID) >= int(maxShares) {
+			httpError(w, 403, "share limit reached for this account")
+			return
+		}
+		bi := inbox{Slug: q.Slug, Owner: i.ID, MaxSize: q.MaxSize, Expires: time.Now().Add(ttl).Unix(), Created: time.Now().Unix(), Uploads: []inboxItem{}}
+		if err := saveInbox(dir, &bi); err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not store reverse share")
+			return
+		}
+		respond(w, 200, map[string]any{"slug": bi.Slug})
+	}
+}
+
+// inboxesOwned: how many inbox files carry this owner. Small dir, small store.
+func (s *sessions) inboxesOwned(dir, owner string) int {
+	ents, err := os.ReadDir(inboxesAttachment(dir))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range ents {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		if bi := loadInbox(dir, strings.TrimSuffix(e.Name(), ".json")); bi != nil && bi.Owner == owner {
+			n++
+		}
+	}
+	return n
+}
+
+// rshareList: GET /api/rshares (session) - the owner's live inbox rows.
+func rshareList(dir string, s *sessions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		i := s.identFrom(r)
+		if i == nil {
+			respond(w, 200, []any{})
+			return
+		}
+		now := time.Now().Unix()
+		out := []any{}
+		ents, err := os.ReadDir(inboxesAttachment(dir))
+		if err != nil {
+			respond(w, 200, out)
+			return
+		}
+		for _, e := range ents {
+			if !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			bi := loadInbox(dir, strings.TrimSuffix(e.Name(), ".json"))
+			if bi == nil || bi.Owner != i.ID {
+				continue
+			}
+			if bi.Expires < now { // self-prune gone/expired rows
+				os.Remove(filepath.Join(inboxesAttachment(dir), e.Name()))
+				continue
+			}
+			total := int64(0)
+			for _, u := range bi.Uploads {
+				total += u.Size
+			}
+			out = append(out, map[string]any{"slug": bi.Slug, "maxSize": bi.MaxSize, "expires": bi.Expires, "uploads": len(bi.Uploads), "bytes": total, "items": bi.Uploads})
+		}
+		respond(w, 200, out)
+	}
+}
+
+// rshareMeta: GET /api/rshare/{slug} (public, sender page). The upload page
+// needs only the constraints - never the owner, inventory or keys.
+func rshareMeta(dir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		bi := loadInbox(dir, slug)
+		if bi == nil || bi.Expires < time.Now().Unix() {
+			httpError(w, 404, "no such reverse share")
+			return
+		}
+		respond(w, 200, map[string]any{"maxSize": bi.MaxSize, "expires": bi.Expires})
+	}
+}
+
+// rshareIn: POST /api/rshare/{slug}/in (public, rate limited, senders). Body
+// {id}: registers an already-uploaded paste against the inbox. The upload
+// page created it through the standard encrypted endpoints with the uplink
+// key in the fragment.
+func (s *sessions) rshareIn(dir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		bi := loadInbox(dir, slug)
+		if bi == nil || bi.Expires < time.Now().Unix() {
+			httpError(w, 404, "no such reverse share")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+		var q struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+			httpError(w, 400, "invalid request body")
+			return
+		}
+		if !validID(q.ID) {
+			httpError(w, 400, "bad id")
+			return
+		}
+		rb, _ := os.ReadFile(filepath.Join(dir, q.ID+".json"))
+		var p paste
+		if json.Unmarshal(rb, &p) != nil || p.Expires < time.Now().Unix() {
+			httpError(w, 404, "upload not found")
+			return
+		}
+		size := p.Len // bundles carry Len; text pastes are 0 at the server
+		if size > bi.MaxSize {
+			httpError(w, 403, "file exceeds the reverse share cap")
+			return
+		}
+		for _, u := range bi.Uploads { // idempotent: same paste re-registered
+			if u.ID == q.ID {
+				respond(w, 200, map[string]bool{"ok": true})
+				return
+			}
+		}
+		bi.Uploads = append(bi.Uploads, inboxItem{ID: q.ID, Size: size, Created: time.Now().Unix()})
+		if err := saveInbox(dir, bi); err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not register upload")
+			return
+		}
+		respond(w, 200, map[string]bool{"ok": true})
+	}
+}
+
+// rshareDelete: DELETE /api/rshare/{slug} (owner via session). Deletes the
+// inbox AND its stored uploads (files + blobs): the owner holds the share key
+// and asked to be done.
+func rshareDelete(dir string, s *sessions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		i := s.identFrom(r)
+		slug := r.PathValue("slug")
+		bi := loadInbox(dir, slug)
+		if bi == nil || bi.Owner != i.ID {
+			httpError(w, 404, "no such reverse share")
+			return
+		}
+		for _, u := range bi.Uploads {
+			os.Remove(filepath.Join(dir, u.ID+".json"))
+			os.Remove(filepath.Join(dir, u.ID+".blob"))
+		}
+		os.Remove(filepath.Join(inboxesAttachment(dir), slug+".json"))
+		respond(w, 200, map[string]bool{"ok": true})
+	}
+}
+
 // parseTTL accepts free-form burn times: "10m", "10 min", "6h", "1d", "30 days".
 // Shape only; the range check (1 minute .. MAX_TTL_DAYS) happens at the call
 // site so operators can tune the ceiling via env.
@@ -228,8 +481,17 @@ func build(dir, createKey string) http.Handler {
 		mux.Handle("POST /api/identity/logout", secure(hf(sess.logout())))
 		mux.Handle("POST /api/identity/name", secure(rl.guard(hf(sess.identityName()))))
 		mux.Handle("GET /api/shares", secure(hf(owns.list())))
+		// reverse shares: setup/list/delete are owner-only (session); the
+		// sender-facing meta + upload registration stay registered even when
+		// accounts are later disabled, so live uplinks keep working
+		mux.Handle("POST /api/rshare", secure(rl.guard(hf(sess.rshareCreate(dir)))))
+		mux.Handle("GET /api/rshares", secure(hf(rshareList(dir, sess))))
+		mux.Handle("DELETE /api/rshare/{slug}", secure(hf(rshareDelete(dir, sess))))
 	}
-	mux.Handle("GET /dash", secure(hf(serveIndex))) // dashboard SPA route
+	mux.Handle("GET /api/rshare/{slug}", secure(hf(rshareMeta(dir))))                  // public: sender page header
+	mux.Handle("POST /api/rshare/{slug}/in", secure(rl.guard(hf(sess.rshareIn(dir))))) // public: sender registers upload
+	mux.Handle("GET /dash", secure(hf(serveIndex)))                                    // dashboard SPA route
+	mux.Handle("GET /r/", secure(hf(serveIndex)))                                      // reverse-upload SPA route, slug parsed client-side
 	return mux
 }
 
@@ -343,7 +605,11 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if r.URL.Path != "/" && !strings.HasPrefix(r.URL.Path, "/p/") && r.URL.Path != "/dash" {
+	if strings.HasPrefix(r.URL.Path, "/r/") && !validSlug(r.URL.Path[len("/r/"):]) {
+		http.NotFound(w, r)
+		return
+	}
+	if r.URL.Path != "/" && !strings.HasPrefix(r.URL.Path, "/p/") && !strings.HasPrefix(r.URL.Path, "/r/") && r.URL.Path != "/dash" {
 		http.NotFound(w, r)
 		return
 	}
@@ -561,6 +827,18 @@ func sweep(dir string) {
 		if json.Unmarshal(b, &p) == nil && p.Expires < now {
 			os.Remove(filepath.Join(dir, name))
 			os.Remove(filepath.Join(dir, strings.TrimSuffix(name, ".json")+".blob"))
+		}
+	}
+	// expired reverse-share inboxes sweep out from under their uplink
+	if entries, err := os.ReadDir(inboxesAttachment(dir)); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if !strings.HasSuffix(name, ".json") {
+				continue
+			}
+			if bi := loadInbox(dir, strings.TrimSuffix(name, ".json")); bi != nil && bi.Expires < now {
+				os.Remove(filepath.Join(inboxesAttachment(dir), name))
+			}
 		}
 	}
 }

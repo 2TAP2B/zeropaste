@@ -97,6 +97,16 @@
     border-radius: 6px; padding: .3rem .75rem;
   }
   .dashbtn:hover { background: var(--accent-h); border-color: var(--accent-h); }
+  .dashrev { margin-top: 1.25rem; border-top: 1px solid var(--border); padding-top: .75rem; }
+  .dashrev .dashhead { margin-bottom: .35rem; }
+  #revlist { display: flex; flex-direction: column; gap: .4rem; margin-bottom: .5rem; }
+  .revform input[type="text"] { flex: 0 1 8rem; width: auto; }
+  .revform #revslug { flex: 1 1 10rem; }
+  .revform input[aria-label="link expiry"], .revform input[aria-label="max file size in MB"] { flex: 0 0 auto; width: 4.5rem; text-align: center; }
+  #rhead { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; flex-wrap: wrap; margin-bottom: .35rem; }
+  #rhead b { color: var(--text); }
+  #rmeta { margin-top: 0; }
+  .rdrop { margin-top: 0; }
   .dashacts { display: flex; align-items: center; gap: .5rem; }
   .dashiconbtn {
     width: 2.1rem; height: 2.1rem; padding: .45rem; flex: 0 0 auto;
@@ -239,15 +249,15 @@
   button.primary:disabled { opacity: .6; cursor: wait; }
   .hint { font-size: .8rem; color: var(--muted); margin-top: .75rem; }
   .hint.danger { color: var(--danger); }
-  #dropzone {
+  #dropzone, #rdrop {
     border: 1px dashed var(--border); border-radius: 8px;
     margin-top: .75rem; padding: .8rem 1rem;
     font-size: .8rem; color: var(--muted); text-align: center;
     cursor: pointer; user-select: none;
     transition: border-color .15s, color .15s;
   }
-  #dropzone:hover, #dropzone.drag { border-color: var(--accent); color: var(--text); }
-  #files { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; }
+  #dropzone:hover, #dropzone.drag, #rdrop:hover, #rdrop.drag { border-color: var(--accent); color: var(--text); }
+  #files, #rfiles { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; }
   .chip {
     display: inline-flex; align-items: center; gap: .5rem;
     background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
@@ -264,12 +274,12 @@
   }
   .chip button:hover { color: var(--danger); }
   .progwrap { display: flex; align-items: center; gap: .75rem; margin-top: .75rem; }
-  #progbar {
+  #progbar, #rprogbar {
     flex: 1; height: 8px; background: var(--border); border-radius: 999px; overflow: hidden;
   }
-  #progfill { height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .2s; }
-  #proglabel { font-size: .75rem; color: var(--muted); white-space: nowrap; }
-  #progcancel { font-size: .75rem; padding: .35rem .7rem; }
+  #progfill, #rprogfill { height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .2s; }
+  #proglabel, #rproglabel { font-size: .75rem; color: var(--muted); white-space: nowrap; }
+  #progcancel, #rprogcancel { font-size: .75rem; padding: .35rem .7rem; }
   #filelist { display: flex; flex-direction: column; gap: .4rem; margin-top: .75rem; }
   .filerow {
     display: flex; align-items: center; gap: .75rem;

@@ -1,4 +1,4 @@
-import { randomKey, deriveKey, b64uFromBytes, AesKey } from "./crypto";
+import { randomKey, deriveKey, b64uFromBytes, bytesFromB64u, importKeyB64u, AesKey } from "./crypto";
 import { assembleEnv } from "./bundle";
 
 // Client-side byte cap mirrors the server MAX_UPLOAD default (100 MB). The
@@ -24,6 +24,7 @@ export interface UploadOpts {
   ttl: string;
   burn: boolean;
   pass: string;
+  preKeyB64?: string; // upload under a prepared key (reverse-share uplinks)
   onProgress?: (pct: number, phase: "encrypt" | "upload" | "finish") => void;
   onSession?: (uploadId: string) => void; // lets callers abort/delete the temp session
   signal?: AbortSignal;
@@ -57,7 +58,13 @@ export async function uploadBundle(o: UploadOpts): Promise<UploadResult> {
   let key: AesKey;
   let keyB64 = "";
   const { salt, saltB64 } = saltIfNeeded(o.pass);
-  if (o.pass) {
+  if (o.preKeyB64) {
+    // reverse-share flow: the uplink fragment carries this key; reuse it so
+    // the collector can decrypt
+    if (o.pass) throw new Error("a passphrase cannot be combined with a pre-baked key");
+    key = await importKeyB64u(o.preKeyB64);
+    keyB64 = o.preKeyB64;
+  } else if (o.pass) {
     key = await deriveKey(o.pass, salt as Uint8Array<ArrayBuffer>);
   } else {
     const k = await randomKey();

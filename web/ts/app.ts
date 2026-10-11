@@ -6,6 +6,7 @@ import { readView } from "./read";
 import { uploadBundle, abortUpload, UploadAborted, setClientMaxUpload } from "./uploads";
 import { selfcheck } from "./selfcheck";
 import { bootAccount, stashForCreate, dashboardPage } from "./account";
+import { reverseView } from "./reverse";
 
 const burnOn = (): boolean => $("burn").getAttribute("aria-pressed") === "true";
 $("burn").addEventListener("click", () =>
@@ -322,6 +323,10 @@ if (location.search.includes("selfcheck")) {
   initTheme();
   void dashboardPage();
   void bootAccount(); // same header: theme toggle + account button work here
+} else if (location.pathname.startsWith("/r/")) {
+  initTheme();
+  void reverseView();
+  void bootAccount(); // theme + account button; senders can stay anonymous
 } else if (location.pathname.startsWith("/p/")) {
   initTheme();
   readView();

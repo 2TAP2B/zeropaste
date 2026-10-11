@@ -48,6 +48,11 @@ export async function randomKey(): Promise<{ key: AesKey; keyB64: string }> {
   };
 }
 
+// pre-baked keys (reverse-share uplinks) arrive as a fragment string
+export async function importKeyB64u(keyB64: string): Promise<AesKey> {
+  return crypto.subtle.importKey("raw", bytesFromB64u(keyB64), "AES-GCM", false, ["encrypt"]);
+}
+
 export function deriveKey(passphrase: string, salt: Uint8Array<ArrayBuffer>): Promise<AesKey> {
   const base = crypto.subtle.importKey("raw", enc.encode(passphrase), "PBKDF2", false, [
     "deriveKey",
