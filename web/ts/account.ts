@@ -82,6 +82,8 @@ export async function refreshMe(): Promise<void> {
     // button and pane go away entirely (the /dash card adapts in loadDash)
     const accountsOff = me.accounts === false;
     ($("accbtn") as HTMLButtonElement).classList.toggle("hidden", accountsOff);
+    // header Log out: visible on EVERY page once signed in (not only /dash)
+    ($("headerlogout") as HTMLButtonElement).classList.toggle("hidden", !signedIn);
     if (accountsOff) {
       poll.textContent = "accounts are disabled on this instance";
       reg.disabled = true;
@@ -314,6 +316,11 @@ export async function bootAccount(): Promise<void> {
     }
     (document.getElementById("accpanel") as HTMLDivElement).showPopover();
   });
+  // header Log out: works on every page, mirrors the dashboard action
+  $("headerlogout").addEventListener("click", async () => {
+    await logout();
+    location.reload(); // land signed out
+  });
   // statistics refresh whenever the lightbox opens or closes
   const panel = $("accpanel") as HTMLElement;
   panel.addEventListener("toggle", () => {
@@ -373,10 +380,6 @@ export async function dashboardPage(): Promise<void> {
     registerStart()
       .then(() => void loadDash())
       .catch((e) => dashError(e instanceof Error ? e.message : "failed"));
-  });
-  $("headerlogout").addEventListener("click", async () => {
-    await logout();
-    location.reload(); // land on the anonymous dashboard
   });
   $("dashlogin").addEventListener("click", () => {
     // errors must land in #dasherr (the accpanel is closed on /dash);
@@ -635,13 +638,11 @@ async function loadDash(): Promise<void> {
     $("dashtabs").classList.add("hidden");
     $("dashpanes").classList.add("hidden");
     $("dashanon").classList.remove("hidden");
-    ($("headerlogout") as HTMLButtonElement).classList.add("hidden");
     return; // sign-in card is up
   }
   $("dashanon").classList.add("hidden");
   $("dashtabs").classList.remove("hidden");
   $("dashpanes").classList.remove("hidden");
-  ($("headerlogout") as HTMLButtonElement).classList.remove("hidden");
   void renderRshares().catch(() => {
     dashError("could not list reverse shares");
   });

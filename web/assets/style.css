@@ -117,6 +117,16 @@
     display: flex; align-items: center; gap: .55rem;
     padding: .5rem .6rem; font-size: .8rem;
   }
+  /* open-share arrow (left side of every share/uplink row) - sized for
+     desktop too; the old rule lived only inside the mobile media query,
+     which left the icon invisible on larger screens */
+  .reviconlink {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.9rem; height: 1.9rem; padding: .4rem; flex: 0 0 auto;
+    color: var(--text); cursor: pointer;
+  }
+  .reviconlink svg { width: 1.05rem; height: 1.05rem; }
+  .reviconlink:hover { color: var(--accent); }
   .revslug {
     background: none; border: none; padding: 0; margin: 0;
     font: inherit; font-weight: 600; color: var(--text); cursor: pointer;
@@ -137,6 +147,7 @@
   .rowicon svg { width: 1.05rem; height: 1.05rem; }
   .rowicon:hover { color: var(--accent); border-color: var(--border); }
   .rowicon.danger:hover { color: var(--danger); }
+  .rowicon.copied { color: var(--ok); border-color: transparent; }
   .chev svg { transition: transform .15s; }
   .chev.open svg { transform: rotate(180deg); }
   .revdetail { padding: 0 .6rem .6rem; display: flex; flex-direction: column; gap: .35rem; }
@@ -448,12 +459,6 @@
     .dashhead { flex-wrap: wrap; }
     .dashtabs { order: 2; width: 100%; justify-content: center; gap: .2rem; }
     .dashtab { padding: .35rem .4rem; font-size: .75rem; }
-    .reviconlink {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 1.9rem; height: 1.9rem; padding: .4rem;
-      color: var(--text); cursor: pointer; flex: 0 0 auto;
-    }
-    .reviconlink svg { width: 1.05rem; height: 1.05rem; }
     .unlockbox { padding-top: .25rem; }
     .unlockrow { flex-direction: column; }
     .unlockrow .primary { width: 100%; }
