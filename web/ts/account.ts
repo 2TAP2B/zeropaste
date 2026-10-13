@@ -579,13 +579,38 @@ async function renderRshares(): Promise<void> {
     lk.textContent = uplink;
     const valid = r.pass || keyB64;
     ul.append(lk);
+    detail.append(ul);
     if (!valid) {
       const warn = document.createElement("span");
-      warn.className = "chipmeta burn";
-      warn.textContent = "key missing on this browser - recreate the uplink or copy from the original tab";
+      warn.className = "revwarn";
+      warn.textContent = "key missing on this browser - paste the original drop link below";
       ul.append(warn);
+      const fix = document.createElement("div");
+      fix.className = "srow revup revfix";
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.placeholder = "paste the drop link or just the #key";
+      inp.autocomplete = "off";
+      inp.spellcheck = false;
+      const repair = document.createElement("button");
+      repair.type = "button";
+      repair.className = "rowcopy";
+      repair.textContent = "repair";
+      repair.addEventListener("click", () => {
+        // recovery: the key never left the sender-side links, so it has to
+        // come back from wherever one still lives (chat, another device)
+        const raw = inp.value.trim();
+        const key = raw.includes("http") ? raw.slice(raw.lastIndexOf("#") + 1).trim() : raw;
+        if (!/^[A-Za-z0-9_-]{10,}$/.test(key)) {
+          warn.textContent = "that is not an intact drop link or key - keep the part after #";
+          return;
+        }
+        fragPut("rv:" + r.slug, key);
+        void renderRshares();
+      });
+      fix.append(inp, repair);
+      detail.append(fix);
     }
-    detail.append(ul);
     for (const it of r.items) {
       const ar = document.createElement("div");
       ar.className = "srow revarrival";

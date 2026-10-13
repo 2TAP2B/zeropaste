@@ -2,6 +2,7 @@ import { $ } from "./dom";
 import { uploadBundle, abortUpload, UploadAborted } from "./uploads";
 import { humanSize } from "./ui";
 import { deriveKey, open_, bytesFromB64u, importKeyB64u, AesKey } from "./crypto";
+import { stashForCreate } from "./account";
 
 // /r/<slug>#<keyB64>: the sender-facing reverse upload page. The slug picks
 // the inbox, the fragment key is required - uploads are encrypted client-side
@@ -137,6 +138,10 @@ export async function reverseView(): Promise<void> {
       rfail("This drop link lost its decryption key - only the intact link (with the part after #) can upload.");
       return;
     }
+    // remember the key on EVERY browser that opens the intact link: the
+    // owner re-opens their own drop link here and the dashboard row heals
+    // (the stash is the client-side key store, never sent to the server)
+    stashForCreate("rv:" + rslug, keyB64);
     history.replaceState(null, "", location.pathname);
     await startBody(await importKeyB64u(keyB64), meta.expires, cap);
     return;
