@@ -105,6 +105,12 @@
   .dashtab.active {
     background: var(--accent); border-color: var(--accent); color: var(--on-accent);
   }
+.dashtab-new {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+}
+.dashtab-new:hover {
+  background: var(--accent-h); border-color: var(--accent-h);
+}
   .dashpane { margin-top: .9rem; }
   .dashbtn {
     display: inline-block; font-size: .75rem; font-weight: 600; text-decoration: none;

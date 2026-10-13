@@ -23,6 +23,9 @@
     <button type="button" class="theme-toggle accbtn" id="accbtn" aria-label="Account" title="Account and shares">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
     </button>
+    <button type="button" class="theme-toggle accbtn hidden" id="headerlogout" aria-label="Log out" title="Log out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+    </button>
   </header>
 
   <!-- account lightbox: passkey-only create/sign-in + dashboard link -->
@@ -214,12 +217,7 @@
         <button type="button" class="dashtab active" data-tab="shares">shares</button>
         <button type="button" class="dashtab" data-tab="reverse">reverse</button>
         <button type="button" class="dashtab" data-tab="account">account</button>
-      </div>
-      <div class="dashacts">
-        <a class="dashbtn" href="/">new paste</a>
-        <button type="button" class="dashiconbtn" id="dashlogout" aria-label="Log out" title="Log out">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-        </button>
+        <a href="/" class="dashtab dashtab-new">new paste</a>
       </div>
     </div>
     <div id="dasherr" class="hint danger hidden"></div>

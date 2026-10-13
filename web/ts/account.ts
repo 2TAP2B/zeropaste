@@ -334,7 +334,7 @@ function shareURL(r: ShareRow): string {
 }
 
 function dashTab(which: string): void {
-  for (const b of document.querySelectorAll("#dashtabs .dashtab")) {
+  for (const b of document.querySelectorAll("#dashtabs .dashtab[data-tab]")) {
     b.classList.toggle("active", (b as HTMLElement).dataset.tab === which);
   }
   for (const pane of ["pane-shares", "pane-reverse", "pane-account"]) {
@@ -363,7 +363,7 @@ export async function dashboardPage(): Promise<void> {
     /* private mode */
   }
   dashTab(tab);
-  for (const b of document.querySelectorAll("#dashtabs .dashtab")) {
+  for (const b of document.querySelectorAll("#dashtabs .dashtab[data-tab]")) {
     (b as HTMLElement).addEventListener("click", () => dashTab((b as HTMLElement).dataset.tab ?? "shares"));
   }
 
@@ -374,7 +374,7 @@ export async function dashboardPage(): Promise<void> {
       .then(() => void loadDash())
       .catch((e) => dashError(e instanceof Error ? e.message : "failed"));
   });
-  $("dashlogout").addEventListener("click", async () => {
+  $("headerlogout").addEventListener("click", async () => {
     await logout();
     location.reload(); // land on the anonymous dashboard
   });
@@ -635,11 +635,13 @@ async function loadDash(): Promise<void> {
     $("dashtabs").classList.add("hidden");
     $("dashpanes").classList.add("hidden");
     $("dashanon").classList.remove("hidden");
+    ($("headerlogout") as HTMLButtonElement).classList.add("hidden");
     return; // sign-in card is up
   }
   $("dashanon").classList.add("hidden");
   $("dashtabs").classList.remove("hidden");
   $("dashpanes").classList.remove("hidden");
+  ($("headerlogout") as HTMLButtonElement).classList.remove("hidden");
   void renderRshares().catch(() => {
     dashError("could not list reverse shares");
   });
