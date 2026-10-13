@@ -1,17 +1,13 @@
 # zeropaste
 
-Self-hosted, zero-knowledge paste sharing in a single Go binary. The browser encrypts your paste (AES-256-GCM via WebCrypto) before it ever hits the wire - the server stores ciphertext and nothing else. The decryption key rides in the URL fragment, which browsers never send upstream.
-
-Anonymous by default: no sign-up, no cookies, no request logs. Optional passkey accounts exist purely for a private dashboard of your active shares - opt-in, never required to paste. One audited third-party Go dependency (go-webauthn); everything else is stdlib.
-
 <p align="center">
   <a href="https://github.com/2TAP2B/zeropaste/releases/latest"><img src="https://img.shields.io/github/v/release/2TAP2B/zeropaste?include_prereleases&label=release&color=905cf6" alt="release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license MIT"></a>
   <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="go 1.26">
-  <img src="https://img.shields.io/badge/direct%20Go%20deps-1%20(go--webauthn)-blue" alt="one direct go dependency">
-  <img src="https://img.shields.io/ghcr/image-size/2tap2b/zeropaste/latest?label=image%20size" alt="ghcr image size">
   <a href="https://github.com/2TAP2B/zeropaste/actions/workflows/docker.yml"><img src="https://github.com/2TAP2B/zeropaste/actions/workflows/docker.yml/badge.svg" alt="docker build"></a>
 </p>
+
+Self-hosted, zero-knowledge paste sharing in a single Go binary: the browser encrypts your paste with AES-256-GCM before it ever hits the wire, and the decryption key rides in the URL fragment, which browsers never send anywhere. Everything is anonymous by default - no sign-up, no cookies, no request logs - with optional passkey accounts for a private dashboard of your active shares.
 
 <p align="center">
   <img src="docs/screens/compose-dark.png" alt="zeropaste compose view in the dark theme" width="620">
@@ -19,19 +15,17 @@ Anonymous by default: no sign-up, no cookies, no request logs. Optional passkey 
 
 ## Features
 
-- Single binary, all frontend assets vendored and embedded - one `go build` ships the whole app; no CDN calls anywhere
-- Zero-knowledge: random key per paste, lives in the URL fragment, stripped from the address bar after decrypt
-- Optional passphrase mode: PBKDF2-SHA-256 (600k iterations) + random salt; the link alone is useless, share the passphrase over another channel
-- Burn after reading (paste dies on first successful decrypt - link unfurlers and wrong-passphrase visitors can't destroy it)
-- Free-form burn time: `10m`, `6h`, `1d`, `30 days` - 1 minute to 30 days by default (`MAX_TTL_DAYS` raises or lowers the ceiling), swept by a janitor every minute
-- File bundles that stay encrypted end to end (AES-GCM key per share, manifest never readable by the server) with client-side image thumbnails and a click-to-open lightbox, so big photo bundles load fast
-- Clipboard paste: copy an image anywhere and Ctrl+V attaches it to the upload section
-- Optional syntax highlighting (vendored highlight.js, no CDN calls) with auto language detection
-- Share link QR code, rendered client-side
-- Light/dark theme (system default + toggle), fully responsive down to phones
-- Optional create-gate: one site passphrase in front of `POST /api/paste` (`CREATE_KEY` env); reads stay public - the link is the capability
-- Optional passkey accounts: register/sign in from the account pane (header icon). Creating pastes while signed in feeds the **active-shares dashboard** (`/dash`) - the server sees only expiry/burn per row, never content - with per-row copy-link and delete. Registration can be locked with `REG_OPEN=false`, closed after the first account with `USER_REGISTRATION=false`, and the whole thing switched off with `USER_ACCOUNTS=false`
-- Hardened defaults: strict CSP, nosniff, DENY framing, no-referrer, 30 pastes/min/IP rate limit, slowloris timeouts, no directory listings
+- **Single binary** - all frontend assets embedded, no CDN calls anywhere
+- **Zero-knowledge** - per-paste random key in the URL fragment, stripped from the bar after decrypt
+- **Passphrase mode** - PBKDF2-SHA-256, 600k iterations + random salt; the link alone is useless
+- **Burn after reading, free-form TTL** - `10m` to `30 days` (`MAX_TTL_DAYS`), swept by a janitor
+- **Encrypted file bundles** - client-side manifests, image thumbnails, click-to-open lightbox
+- **Clipboard paste** - Ctrl+V anywhere attaches images to the upload section
+- **Syntax highlighting + QR codes** - vendored highlight.js and qrcode-generator, rendered locally
+- **Light/dark theme** - system default plus toggle, responsive down to phones
+- **Optional create-gate** - one site passphrase in front of creates (`CREATE_KEY`); reads stay public
+- **Optional passkey accounts** - private share dashboard (`/dash`) with copy/delete per row; the server never sees content
+- **Hardened defaults** - strict CSP, nosniff, DENY framing, no-referrer, per-IP rate limit, slowloris timeouts
 
 ## Install
 
@@ -144,3 +138,7 @@ For full details, read [AGENTS.md](AGENTS.md) - the complete spec.
 ## Contributing
 
 PRs welcome, but respect the constraints: single binary, one Go module dependency (passkeys only - no web frameworks, no DB drivers), English UI, no accounts beyond the optional passkey system. Run `gofmt -l .`, `go vet ./...`, `go test ./...`, `tsc --noEmit`, and regen the bundle (`esbuild --bundle web/ts/app.ts --outfile=web/assets/app.js --minify --target=es2020`) before submitting; add a test for every abuse case before adding the mitigation.
+
+## AI usage
+
+This app was built with the help of AI - mostly with local Qwen3.8 27B, together with the omp agent, and with GLM-5.3 Flash as advisor.
