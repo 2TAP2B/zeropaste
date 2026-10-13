@@ -87,30 +87,23 @@
   .accrow { display: flex; gap: .6rem; flex-wrap: wrap; margin: .5rem 0; }
   #accpanel .hint { margin-top: .5rem; }
   .dashhead {
-    position: relative;
-    display: flex; justify-content: space-between; align-items: center;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
     margin-bottom: .6rem;
   }
-  .dashhead b { color: var(--text); }
-  .dashtabs {
-    position: absolute; left: 50%; top: 50%;
-    transform: translate(-50%, -50%);
-    display: flex; gap: .35rem;
-  }
-  .dashtab {
-    font-size: .82rem; padding: .4rem .85rem; border-radius: 999px;
-    background: none; border: 1px solid var(--border); color: var(--muted);
-  }
-  .dashtab:hover { color: var(--text); border-color: var(--accent); }
-  .dashtab.active {
-    background: var(--accent); border-color: var(--accent); color: var(--on-accent);
-  }
-.dashtab-new {
+.dashtabs {
+  display: flex; flex-wrap: wrap; gap: .35rem; align-items: center;
+}
+.dashtab {
+  font-size: .82rem; padding: .4rem .85rem; border-radius: 999px;
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  text-decoration: none; cursor: pointer; white-space: nowrap; flex: 0 0 auto;
+  font-family: inherit;
+}
+.dashtab:hover { color: var(--text); border-color: var(--accent); }
+.dashtab.active {
   background: var(--accent); border-color: var(--accent); color: var(--on-accent);
 }
-.dashtab-new:hover {
-  background: var(--accent-h); border-color: var(--accent-h);
-}
+.dashtab-new { font-weight: 600; }
   .dashpane { margin-top: .9rem; }
   .dashbtn {
     display: inline-block; font-size: .75rem; font-weight: 600; text-decoration: none;
@@ -169,12 +162,6 @@
   .rdrop { margin-top: .75rem; margin-bottom: .1rem; }
   #rfiles { margin-top: .6rem; }
   #rsend { margin-top: .9rem; }
-  .dashacts { display: flex; align-items: center; gap: .5rem; }
-  .dashiconbtn {
-    width: 2.1rem; height: 2.1rem; padding: .45rem; flex: 0 0 auto;
-    display: inline-flex; align-items: center; justify-content: center;
-  }
-  .dashiconbtn svg { width: 1.05rem; height: 1.05rem; }
   #dashrows { display: flex; flex-direction: column; gap: .4rem; }
   .srow {
     display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; row-gap: .35rem;
@@ -457,10 +444,10 @@
     .copybtn { width: auto; justify-content: center; padding: .65rem; }
     .copybtn svg { width: 17px; height: 17px; }
     .readhead { margin-bottom: .6rem; }
-    /* tabs line up BELOW the new paste / logout line on phones */
+    /* tab pills sit on their own centered line on phones */
     .dashhead { flex-wrap: wrap; }
-    .dashacts { order: 1; width: 100%; justify-content: flex-end; }
-    .dashtabs { order: 2; width: 100%; position: static; transform: none; justify-content: center; }
+    .dashtabs { order: 2; width: 100%; justify-content: center; gap: .2rem; }
+    .dashtab { padding: .35rem .4rem; font-size: .75rem; }
     .reviconlink {
       display: inline-flex; align-items: center; justify-content: center;
       width: 1.9rem; height: 1.9rem; padding: .4rem;
