@@ -4,6 +4,32 @@ Self-hosted, zero-knowledge paste sharing in a single Go binary. The browser enc
 
 Anonymous by default: no sign-up, no cookies, no request logs. Optional passkey accounts exist purely for a private dashboard of your active shares - opt-in, never required to paste. One audited third-party Go dependency (go-webauthn); everything else is stdlib.
 
+<p align="center">
+  <a href="https://github.com/2TAP2B/zeropaste/releases/latest"><img src="https://img.shields.io/github/v/release/2TAP2B/zeropaste?include_prereleases&label=release&color=905cf6" alt="release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license MIT"></a>
+  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="go 1.26">
+  <img src="https://img.shields.io/badge/direct%20Go%20deps-1%20(go--webauthn)-blue" alt="one direct go dependency">
+  <img src="https://img.shields.io/ghcr/image-size/2tap2b/zeropaste/latest?label=image%20size" alt="ghcr image size">
+  <a href="https://github.com/2TAP2B/zeropaste/actions/workflows/docker.yml"><img src="https://github.com/2TAP2B/zeropaste/actions/workflows/docker.yml/badge.svg" alt="docker build"></a>
+</p>
+
+<p align="center">
+  <img src="docs/screens/reader-light.png" alt="zeropaste reading view with syntax highlighting" width="620">
+</p>
+
+<p align="center">
+<table>
+  <tr>
+    <td><img src="docs/screens/share-link.png" alt="share link view with the key in the fragment" width="310"></td>
+    <td><img src="docs/screens/dashboard.png" alt="active shares dashboard" width="310"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screens/compose.png" alt="compose view with dropzone and options" width="310"></td>
+    <td><img src="docs/screens/reader-dark.png" alt="dark theme reading view" width="310"></td>
+  </tr>
+</table>
+</p>
+
 ## Features
 
 - Single binary, all frontend assets vendored and embedded - one `go build` ships the whole app; no CDN calls anywhere
