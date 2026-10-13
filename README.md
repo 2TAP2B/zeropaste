@@ -20,6 +20,7 @@ Self-hosted, zero-knowledge paste sharing in a single Go binary: the browser enc
 - **Passphrase mode** - PBKDF2-SHA-256, 600k iterations + random salt; the link alone is useless
 - **Burn after reading, free-form TTL** - `10m` to `30 days` (`MAX_TTL_DAYS`), swept by a janitor
 - **Encrypted file bundles** - client-side manifests, image thumbnails, click-to-open lightbox
+- **Reverse shares** - drop links that collect uploads from others (`/r/<slug>`); every arrival arrives encrypted, only your browser holds the key
 - **Clipboard paste** - Ctrl+V anywhere attaches images to the upload section
 - **Syntax highlighting + QR codes** - vendored highlight.js and qrcode-generator, rendered locally
 - **Light/dark theme** - system default plus toggle, responsive down to phones
