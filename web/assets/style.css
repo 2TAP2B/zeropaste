@@ -111,7 +111,7 @@
     border-radius: 6px; padding: .3rem .75rem;
   }
   .dashbtn:hover { background: var(--accent-h); border-color: var(--accent-h); }
-  #revlist { display: flex; flex-direction: column; gap: .4rem; margin-bottom: .5rem; }
+  #revlist { display: flex; flex-direction: column; gap: .4rem; margin-top: .95rem; }
   .revrow { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
   .revhead {
     display: flex; align-items: center; gap: .55rem;
@@ -161,9 +161,9 @@
   .revfix .rowcopy { flex: 0 0 auto; }
   .revarrival a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .revform {
-    margin-top: .75rem; border-top: 1px solid var(--border); padding-top: .75rem;
     display: flex; flex-direction: column; gap: .55rem;
-    max-width: 480px;
+    max-width: 480px; padding-bottom: .85rem;
+    border-bottom: 1px solid var(--border);
   }
   .revform .accrow { margin: 0; flex-wrap: nowrap; }
   .revform #revslug { flex: 1 1 auto; width: auto; }

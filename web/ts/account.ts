@@ -505,7 +505,7 @@ async function renderRshares(): Promise<void> {
   if (rows.length === 0) {
     const empty = document.createElement("div");
     empty.className = "hint";
-    empty.textContent = "No reverse shares yet - create a drop link below.";
+    empty.textContent = "No reverse shares yet - create a drop link above.";
     box.append(empty);
     return;
   }

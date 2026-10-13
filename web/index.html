@@ -8,9 +8,9 @@
 <meta property="og:description" content="share secrets, not plaintext - zero-knowledge pastes, encrypted in your browser">
 <meta name="theme-color" content="#1c1917">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.8.9" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.8.9" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.8.9">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.8.10" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.8.10" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.8.10">
 </head>
 <body>
 <main>
@@ -233,7 +233,6 @@
         <div class="hint">Links carry the decryption key in the fragment; the server cannot read any of them. Rows vanish when a share expires or burns.</div>
       </div>
       <div id="pane-reverse" class="dashpane hidden">
-        <div id="revlist"></div>
         <form id="revform">
           <b class="revformhead">add new reverse share</b>
           <div class="accrow">
@@ -250,6 +249,7 @@
             <button type="submit" class="primary accfull" id="revcreate">Create drop link</button>
           </div>
         </form>
+        <div id="revlist"></div>
         <div class="hint">Visitors open the drop link and upload files to you - encrypted with the link's own key, so the server stores ciphertext only. Set a passphrase for a clean bare link: visitors type it once; share it over another channel. Arrivals show up as rows above and live until the inbox expires.</div>
       </div>
       <div id="pane-account" class="dashpane hidden">
@@ -320,6 +320,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.8.9"></script>
+<script src="/assets/app.js?v=0.8.10"></script>
 </body>
 </html>
