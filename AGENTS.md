@@ -38,7 +38,7 @@ Out of scope by design (an agent must not add these): paste editing, comments, p
 | `web/assets/qrcode.min.js` | qrcode-generator v1.4.4 (~21 KB) from `https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js`, committed. QR is rendered client-side only. |
 | `web/assets/atom-one-dark.min.css` | highlight.js dark theme from the same release, committed. Paired with `atom-one-light.min.css`: both are linked with static `prefers-color-scheme` media (no-JS safe) and `applyTheme` pins the active one to `media="all"` (theme = `#hljs-dark` / `#hljs-light`). |
 | `main_test.go` | httptest-based suite (see §8). |
-| `docs/screens/*.png` | README screenshots, captured from the shipped UI (reader light/dark, share link, dashboard, compose). |
+| `docs/screens/compose-dark.png` | README hero screenshot, captured from the shipped UI (dark-theme compose view). |
 | `go.mod` | `module paste`, `go 1.25`, empty require block. |
 | `flake.nix`, `.envrc`, `flake.lock` | Nix: dev shell (Go via nixpkgs unstable, git, ripgrep, node), package (see `package.nix`), NixOS module (see `module.nix`); `.envrc` contains exactly `use flake`. |
 | `package.nix` | Single Go derivation: `buildGoModule`, `vendorHash = null` (stdlib only), `CGO_ENABLED=0`, ldflags `-s -w`; binary renamed `paste` → `zeropaste` (avoids colliding with coreutils `paste` in PATH). MIT license. |

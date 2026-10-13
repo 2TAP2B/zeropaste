@@ -14,20 +14,7 @@ Anonymous by default: no sign-up, no cookies, no request logs. Optional passkey 
 </p>
 
 <p align="center">
-  <img src="docs/screens/reader-light.png" alt="zeropaste reading view with syntax highlighting" width="620">
-</p>
-
-<p align="center">
-<table>
-  <tr>
-    <td><img src="docs/screens/share-link.png" alt="share link view with the key in the fragment" width="310"></td>
-    <td><img src="docs/screens/dashboard.png" alt="active shares dashboard" width="310"></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screens/compose.png" alt="compose view with dropzone and options" width="310"></td>
-    <td><img src="docs/screens/reader-dark.png" alt="dark theme reading view" width="310"></td>
-  </tr>
-</table>
+  <img src="docs/screens/compose-dark.png" alt="zeropaste compose view in the dark theme" width="620">
 </p>
 
 ## Features
