@@ -17,6 +17,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -642,13 +643,30 @@ func assets() http.Handler {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// explicit types: scratch containers carry no /etc/mime.types, so the
+	// manifest and SVG must be mapped here or browsers reject them
+	for ext, typ := range map[string]string{
+		".svg":         "image/svg+xml",
+		".webmanifest": "application/manifest+json",
+	} {
+		if err := mime.AddExtensionType(ext, typ); err != nil {
+			log.Fatal(err)
+		}
+	}
 	// no directory listings, only known files
 	return http.StripPrefix("/assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "" || strings.HasSuffix(r.URL.Path, "/") {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Cache-Control", "public, max-age=86400")
+		if r.URL.Path == "sw.js" {
+			// the worker lives under /assets/ but must control the whole
+			// origin, and it must revalidate each visit so a deploy swaps it
+			w.Header().Set("Service-Worker-Allowed", "/")
+			w.Header().Set("Cache-Control", "no-cache")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+		}
 		http.ServeFileFS(w, r, sub, r.URL.Path)
 	}))
 }

@@ -23,6 +23,7 @@ Self-hosted, zero-knowledge paste sharing in a single Go binary: the browser enc
 - **Reverse shares** - drop links that collect uploads from others (`/r/<slug>`); every arrival arrives encrypted, only your browser holds the key
 - **Clipboard paste** - Ctrl+V anywhere attaches images to the upload section
 - **Syntax highlighting + QR codes** - vendored highlight.js and qrcode-generator, rendered locally
+- **PWA, installable** - app manifest + icon, service worker caching only the static shell (asynchronous data like `/api/*` is never cached), so the app opens offline and installs as an app; favicons + og-image included for link previews
 - **Light/dark theme** - system default plus toggle, responsive down to phones
 - **Optional create-gate** - one site passphrase in front of creates (`CREATE_KEY`); reads stay public
 - **Optional passkey accounts** - private share dashboard (`/dash`) with copy/delete per row; the server never sees content

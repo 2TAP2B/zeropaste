@@ -35,7 +35,12 @@ Out of scope by design (an agent must not add these): paste editing, comments, p
 | `web/assets/style.css` | All styling. |
 | `web/ts/` | Typed TS sources (`app.ts` entry, `crypto.ts`, `theme.ts`, `ui.ts`, `read.ts`, `globals.d.ts`); strict `tsc` (`tsconfig.json`, DOM types only - WebCrypto/WebAuthn wrappers). Vanilla, **no framework**; direct DOM. |
 | `web/assets/highlight.min.js` | highlight.js v11.11.1 "common" build (~127 KB), fetched once from `https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js` and committed. Never hotlink. |
-| `web/assets/qrcode.min.js` | qrcode-generator v1.4.4 (~21 KB) from `https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js`, committed. QR is rendered client-side only. |
+|`web/assets/qrcode.min.js`|qrcode-generator v1.4.4 (~21 KB) from `https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js`, committed. QR is rendered client-side only.|
+|`web/assets/icon.svg`|Brand mark: padlock (the read-view glyph) in accent purple on the dark surface `#1c1917`, rounded square. SVG favicon + PWA "any" icon source.|
+|`web/assets/icon-*.png`, `web/assets/apple-touch-icon.png`|Rasterized from the SVG in a browser canvas (no build tooling): `icon-32.png` (favicon fallback), `icon-192.png`/`icon-512.png` ("any"), `icon-512-maskable.png` (full-bleed, glyph at 70%, also the shape of the 180px `apple-touch-icon.png`). Regenerate by re-rasterizing the SVG, don't hand-edit PNGs.|
+|`web/assets/og.png`|1200×630 link-preview image (same dark bg, wordmark + tagline); head carries static `og:image` metas - never paste content leaks to unfurlers (og:image is intentionally RELATIVE since there is no base-URL config; scrapers resolve it against the page URL).|
+|`web/assets/manifest.webmanifest`|PWA manifest: `name/short_name zeropaste`, `start_url "/"`, `scope /`, `display standalone`, theme/splash `#1c1917`, icon set incl. one `maskable` entry.|
+|`web/assets/sw.js`|Service worker, plain JS (no build step, like highlight/qrcode): caches the STATIC shell only. `/api/*` and non-GET never touch the cache; navigations are network-first with the cached `/` shell as offline fallback; `/assets/*` is cache-first + background refresh. `SHELL` list and `SHELL_VERSION` MUST be updated together with the `?v=` query strings in index.html (precache keys match page URLs exactly).|
 | `web/assets/atom-one-dark.min.css` | highlight.js dark theme from the same release, committed. Paired with `atom-one-light.min.css`: both are linked with static `prefers-color-scheme` media (no-JS safe) and `applyTheme` pins the active one to `media="all"` (theme = `#hljs-dark` / `#hljs-light`). |
 | `main_test.go` | httptest-based suite (see §8). |
 | `docs/screens/compose-dark.png` | README hero screenshot, captured from the shipped UI (dark-theme compose view). |
@@ -128,7 +133,7 @@ Same `validID` gate. Removes the file; idempotent (nonexistent → still 200 `{"
 ### Static routes
 
 - `GET /` and `GET /p/{any}` → serve embedded `web/index.html` with `Cache-Control: no-store`. Invalid id after `/p/` → 404. Any other path → 404.
-- `GET /assets/{file}` → files from embedded `web/assets`; directory roots (empty path or trailing `/` after strip) → 404 (no listings); `Cache-Control: public, max-age=86400`. Note `http.StripPrefix` leaves `""` (not `"/"`) for the bare prefix - guard both.
+- `GET /assets/{file}` → files from embedded `web/assets`; directory roots (empty path or trailing `/` after strip) → 404 (no listings); `Cache-Control: public, max-age=86400`. Note `http.StripPrefix` leaves `""` (not `"/"`) for the bare prefix - guard both. Exception for the worker: `sw.js` is served with `Service-Worker-Allowed: /` + `Cache-Control: no-cache` (it must control the whole origin from its `/assets/` path and revalidate per visit so deploys land). `.svg` and `.webmanifest` are force-mapped via `mime.AddExtensionType` (scratch containers have no `/etc/mime.types`).
 - Routing uses Go ≥1.22 ServeMux method patterns (`"GET /"`, `"POST /api/paste"`). Every handler is wrapped `secure(...)`.
 
 ## 5. Server behavior mandates
@@ -155,6 +160,7 @@ Same `validID` gate. Removes the file; idempotent (nonexistent → still 200 `{"
 - hljs is invoked as `hljs.highlightElement` when `paste.hl && window.hljs`.
 - **Mobile:** `@media (max-width: 540px)` - single-column stacking, full-width form controls (inputs/selects only; KEEP small inline buttons like `.filesave`, `.rowcopy`, `.copybtn`, foot links at auto width - a blanket `button { width: 100% }` blew bundle Save buttons out of the card), `#ttl` full width, `.unlockrow` stacks, smaller body padding. Base layout already fluid (`clamp` padding, `viewport-fit=cover`).
 - **Footer (`.foot`)** - one line: `<b>zeropaste</b> - zero-knowledge pastes · <button .foot-link popovertarget="quickstart">self-host in 30 seconds</button> · <a>source code</a>` (`https://github.com/2TAP2B/zeropaste`). The button opens the `#quickstart` **popover** (native API, zero JS to open) with copyable `docker run` (minimal, NO env) + `compose.yaml` blocks - the compose copy carries ALL knobs as commented lines so pasted deploys start fully public; copy buttons wired by `[data-copy]` in app.js.
+- **PWA (installable app) + link previews:** head carries the manifest link, SVG favicon + 32px PNG fallback, `apple-touch-icon`, `apple-mobile-web-app-title`, and the static `og:image`/`twitter:card` metas (see §3 for assets). app.ts registers `/assets/sw.js` with `scope: "/"` behind a `"serviceWorker" in navigator` guard, failure swallowed (the app is fully functional without it). The worker caches only the static shell: offline boots render any view client-side, paste traffic still errors through the existing error cards. NO `share_target` by design - OS-share text would ride a URL, and the zero-knowledge posture keeps content out of URLs.
 
 ## 7. Dev environment (NixOS)
 

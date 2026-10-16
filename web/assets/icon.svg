@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- zeropaste brand mark: padlock on the dark surface, accent purple -->
+  <rect width="512" height="512" rx="112" fill="#1c1917"/>
+  <path d="M182 240V198a74 74 0 0 1 148 0v42" fill="none" stroke="#a78bfa" stroke-width="42" stroke-linecap="round"/>
+  <rect x="146" y="238" width="220" height="170" rx="32" fill="#a78bfa"/>
+  <circle cx="256" cy="306" r="30" fill="#1c1917"/>
+  <path d="M256 314v46" stroke="#1c1917" stroke-width="30" stroke-linecap="round"/>
+</svg>

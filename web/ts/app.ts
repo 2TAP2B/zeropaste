@@ -8,6 +8,12 @@ import { selfcheck } from "./selfcheck";
 import { bootAccount, stashForCreate, dashboardPage } from "./account";
 import { reverseView } from "./reverse";
 
+// pwa: the worker caches the static shell only (same origin, never /api/*),
+// giving installed-app offline boots; paste traffic always stays live
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/assets/sw.js", { scope: "/" }).catch(() => { });
+}
+
 const burnOn = (): boolean => $("burn").getAttribute("aria-pressed") === "true";
 $("burn").addEventListener("click", () =>
   $("burn").setAttribute("aria-pressed", burnOn() ? "false" : "true"),

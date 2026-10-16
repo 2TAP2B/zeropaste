@@ -243,6 +243,29 @@ func TestAssetsServed(t *testing.T) {
 	if rec := get(h, "/assets/"); rec.Code != 404 {
 		t.Fatalf("asset dir listing: got %d, want 404", rec.Code)
 	}
+	// pwa assets: explicit mime types (scratch has no /etc/mime.types) and
+	// sw.js scoped to the whole origin, always revalidated on deploy
+	for file, ctype := range map[string]string{
+		"icon.svg":             "image/svg+xml",
+		"manifest.webmanifest": "application/manifest+json",
+		"og.png":               "image/png",
+	} {
+		if rec := get(h, "/assets/"+file); rec.Code != 200 {
+			t.Fatalf("%s: got %d, want 200", file, rec.Code)
+		} else if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, ctype) {
+			t.Fatalf("%s: content type %q, want %s", file, got, ctype)
+		}
+	}
+	rec = get(h, "/assets/sw.js")
+	if rec.Code != 200 {
+		t.Fatalf("sw.js: got %d, want 200", rec.Code)
+	}
+	if allowed := rec.Header().Get("Service-Worker-Allowed"); allowed != "/" {
+		t.Fatalf("sw.js: Service-Worker-Allowed %q, want /", allowed)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Fatalf("sw.js: cache control %q, want no-cache", cc)
+	}
 }
 
 func TestRateLimit(t *testing.T) {
