@@ -5,7 +5,7 @@ import { initTheme } from "./theme";
 import { readView } from "./read";
 import { uploadBundle, abortUpload, UploadAborted, setClientMaxUpload } from "./uploads";
 import { selfcheck } from "./selfcheck";
-import { bootAccount, stashForCreate, dashboardPage } from "./account";
+import { bootAccount, stashForCreate, dashboardPage, signedIn } from "./account";
 import { reverseView } from "./reverse";
 
 // pwa: the worker caches the static shell only (same origin, never /api/*),
@@ -124,6 +124,43 @@ document.addEventListener("paste", (e) => {
   setTimeout(() => dropzone.classList.remove("drag"), 600);
 });
 
+// ---- public pastes: opt-in plaintext mode ----
+// The slider skips client-side encryption entirely; the server stores what is
+// sent and the link carries no fragment. Accounts-only (the server 403s
+// otherwise), and an instance can drop the feature via PUBLIC_PASTES=false -
+// /api/gate carries the capability as `public`.
+let publicEnabled = false; // instance capability, set by gateFlow
+const publicOn = (): boolean => $("pub").getAttribute("aria-pressed") === "true";
+
+function syncPublicUI(): void {
+  const on = publicEnabled && publicOn();
+  const pass = $("pass") as HTMLInputElement;
+  pass.disabled = on;
+  if (on) pass.value = "";
+  $("pubnote").classList.toggle("hidden", !on);
+  dropzone.classList.toggle("hidden", on); // public is text-only in v0.10
+  if (on && picked.length > 0) {
+    for (const f of picked) dropThumb(f); // attachments cannot ride a plaintext paste
+    picked = [];
+    renderChips();
+  }
+  validateReady();
+}
+
+function syncPublicAccess(): void {
+  const btn = $("pub") as HTMLButtonElement;
+  btn.disabled = !publicEnabled || !signedIn;
+  btn.title = !publicEnabled ? "public pastes are disabled on this instance"
+    : signedIn ? "" : "sign in to create a public paste";
+  if (!publicEnabled || !signedIn) btn.setAttribute("aria-pressed", "false");
+  syncPublicUI();
+}
+$("pub").addEventListener("click", () => {
+  if (!publicEnabled) return;
+  $("pub").setAttribute("aria-pressed", publicOn() ? "false" : "true");
+  syncPublicUI();
+});
+
 // submit enabled iff there is something to share
 function validateReady(): void {
   const ta = $("text") as HTMLTextAreaElement;
@@ -133,12 +170,16 @@ $("text").addEventListener("input", validateReady);
 
 // create-gate passphrase: revealed only when the server answers 401;
 // kept in sessionStorage (per tab), never localStorage, never a cookie.
-async function createPaste(text: string): Promise<{ id: string; keyB64: string; pass: string }> {
-  const pass = ($("pass") as HTMLInputElement).value;
+async function createPaste(text: string): Promise<{ id: string; keyB64: string; pass: string; pub: boolean }> {
+  const pub = publicEnabled && publicOn();
+  const passInput = $("pass") as HTMLInputElement; // DOM: $ returns Element, .value needs the input type
+  const pass = pub ? "" : passInput.value;
   let payload: string;
   let salt = "";
   let keyB64 = "";
-  if (pass) {
+  if (pub) {
+    payload = text; // plaintext lane: no key exists, the server stores what is sent
+  } else if (pass) {
     const s = crypto.getRandomValues(new Uint8Array(16));
     salt = b64uFromBytes(s);
     payload = await seal(await deriveKey(pass, s), text);
@@ -153,7 +194,7 @@ async function createPaste(text: string): Promise<{ id: string; keyB64: string; 
   const res = await fetch("/api/paste", {
     method: "POST",
     headers,
-    body: JSON.stringify({ data: payload, salt, ttl: ($("ttl") as HTMLInputElement).value, hl: true, burn: burnOn() }),
+    body: JSON.stringify({ data: payload, salt, ttl: ($("ttl") as HTMLInputElement).value, hl: true, burn: burnOn(), public: pub }),
   });
   if (res.status === 401) {
     // stale or hand-forged site key: force the gate screen again
@@ -169,7 +210,7 @@ async function createPaste(text: string): Promise<{ id: string; keyB64: string; 
     throw new Error(body.error ?? res.statusText);
   }
   const id = ((await res.json()) as { id: string }).id;
-  return { id, keyB64, pass };
+  return { id, keyB64, pass, pub };
 }
 
 let activeAbort: AbortController | null = null;
@@ -210,8 +251,9 @@ $("create").addEventListener("click", async () => {
           });
     const link = location.origin + "/p/" + out.id + (out.keyB64 ? "#" + out.keyB64 : "");
     ($("share") as HTMLInputElement).value = link;
-    stashForCreate(out.id, out.keyB64); // dashboard rows re-open via locally stashed fragments
+    if (!out.pub) stashForCreate(out.id, out.keyB64); // dashboard rows re-open via locally stashed fragments
     ($("passnote") as HTMLElement).classList.toggle("hidden", !out.pass);
+    ($("publicnote") as HTMLElement).classList.toggle("hidden", !out.pub);
     drawQR(link);
     $("composeerr").classList.add("hidden");
     for (const f of picked) dropThumb(f); // chips are gone; free their previews
@@ -254,7 +296,14 @@ function enterCompose(): void {
 async function gateFlow(): Promise<void> {
   initTheme();
   try {
-    const cfg = (await (await fetch("/api/gate")).json()) as { enabled: boolean; maxTtlDays?: number; maxUpload?: number };
+    const cfg = (await (await fetch("/api/gate")).json()) as {
+      enabled: boolean;
+      maxTtlDays?: number;
+      maxUpload?: number;
+      public?: boolean;
+    };
+    publicEnabled = cfg.public === true;
+    ($("pub") as HTMLButtonElement).classList.toggle("hidden", !publicEnabled);
     if (cfg.maxTtlDays && cfg.maxTtlDays !== 30) {
       $("ttllabel").textContent = "burn paste after (max " + cfg.maxTtlDays + "d)";
     }
@@ -339,7 +388,7 @@ if (location.search.includes("selfcheck")) {
   void bootAccount(); // /p pages share the header: the account chip must reflect the session too
 } else {
   void gateFlow();
-  void bootAccount();
+  void bootAccount().then(syncPublicAccess); // slider waits for the session probe
 }
 
 // footer quickstart: highlight the copy blocks with the embededded highlight.js

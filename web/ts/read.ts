@@ -32,6 +32,7 @@ interface PasteBody {
   burn: boolean;
   len?: number;
   expires?: number;
+  public?: boolean;
 }
 
 interface PasteRec extends PasteBody {
@@ -80,7 +81,9 @@ function setReadMeta(paste: PasteRec, title: string): void {
 function renderPaste(paste: PasteRec, text: string): void {
   $("pasteview").textContent = text;
   if (paste.hl && window.hljs) hljs?.highlightElement($("pasteview"));
-  setReadMeta(paste, "encrypted paste");
+  setReadMeta(paste, paste.public ? "public paste" : "encrypted paste");
+  document.querySelector(".readtitle .lockico")?.classList.toggle("hidden", !!paste.public);
+  document.querySelector(".readtitle .pubico")?.classList.toggle("hidden", !paste.public);
   $("unlock").classList.add("hidden");
   $("readbody").classList.remove("hidden");
 }
@@ -267,6 +270,12 @@ export async function readView(): Promise<void> {
     paste = await fetchPaste();
   } catch (e) {
     return fail((e as { message?: string }).message ?? "Could not fetch the paste.");
+  }
+
+  // public lane: the payload IS the text - no key exists, nothing to decrypt
+  if (paste.public) {
+    renderPaste(paste, paste.data);
+    return;
   }
 
   if (paste.salt) {

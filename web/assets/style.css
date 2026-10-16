@@ -306,6 +306,9 @@
   button.toggle svg { flex-shrink: 0; }
   button.toggle[aria-pressed="true"] { color: var(--danger); border-color: var(--danger); }
   button.toggle[aria-pressed="true"]:hover { border-color: var(--danger); }
+  /* public pastes are an opt-out-of-encryption choice, not an alarm: accent purple when on */
+  button.toggle.pubmode[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+  button.toggle.pubmode[aria-pressed="true"]:hover { border-color: var(--accent-h); }
   button.primary {
     background: var(--accent); border-color: var(--accent); color: var(--on-accent);
     font-weight: 600;

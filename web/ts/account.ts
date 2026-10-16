@@ -20,6 +20,7 @@ interface ShareRow {
   burn: boolean;
   expires: number;
   views?: number;
+  public?: boolean;
 }
 
 // fragment stash: create flow stores <id> -> key fragment client-side so the
@@ -329,7 +330,9 @@ export async function bootAccount(): Promise<void> {
   await refreshMe();
 }
 
-let signedIn = false;
+// live binding: compose view reads this to gate the public-paste slider
+// (accounts only) - updated by refreshMe after every /api/me poll
+export let signedIn = false;
 
 // --- the dashboard page (/dash) ---
 // Reuses the standard header/footer/popovers: the compose cards are hidden,
@@ -731,6 +734,7 @@ async function loadDash(): Promise<void> {
     meta.className = "revmeta";
     meta.textContent =
       (r.kind === "bundle" ? "files" : "text") +
+      (r.public ? " · public" : "") +
       ` · ${r.views ?? 0} view${(r.views ?? 0) === 1 ? "" : "s"}` +
       (r.burn ? " · burn after reading" : ` · ${expiryText(r.expires).replace(/^in /, "")}`);
     const acts = document.createElement("span");

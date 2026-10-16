@@ -353,13 +353,14 @@ func parseTTL(s string) (time.Duration, bool) {
 }
 
 type paste struct {
-	Data    string `json:"data"`           // base64url(iv || AES-GCM ciphertext), encrypted in the browser
+	Data    string `json:"data"`           // base64url(iv || AES-GCM ciphertext), encrypted in the browser - PLAINTEXT for public pastes
 	Salt    string `json:"salt,omitempty"` // base64url PBKDF2 salt, present when passphrase-protected
 	HL      bool   `json:"hl,omitempty"`   // syntax highlighting requested
 	Burn    bool   `json:"burn"`           // delete after first fetch (immediately unless passphrase-protected)
 	Expires int64  `json:"expires"`
-	Len     int64  `json:"len,omitempty"`   // blob sizes: ciphertext length; presence switches the reader to file mode
-	Views   int64  `json:"views,omitempty"` // opens counter (aggregate only - no IPs, no request logs)
+	Len     int64  `json:"len,omitempty"`    // blob sizes: ciphertext length; presence switches the reader to file mode
+	Views   int64  `json:"views,omitempty"`  // opens counter (aggregate only - no IPs, no request logs)
+	Public  bool   `json:"public,omitempty"` // opt-in public paste: plaintext at rest by explicit creator choice, link-only, no fragment
 }
 
 // envBytes parses a raw byte count (plain integer) with hard clamps.
@@ -525,7 +526,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 // the key or a hint of it.
 func gateStatus(key string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		respond(w, 200, map[string]any{"enabled": key != "", "maxTtlDays": maxTTL, "maxUpload": maxBlobBytes})
+		respond(w, 200, map[string]any{"enabled": key != "", "maxTtlDays": maxTTL, "maxUpload": maxBlobBytes, "public": publicPastesOn()})
 	}
 }
 
@@ -699,11 +700,12 @@ func assets() http.Handler {
 
 func create(dir string, owns *shareIndex) http.HandlerFunc {
 	type req struct {
-		Data string `json:"data"`
-		Salt string `json:"salt"`
-		TTL  string `json:"ttl"`
-		HL   bool   `json:"hl"`
-		Burn bool   `json:"burn"`
+		Data   string `json:"data"`
+		Salt   string `json:"salt"`
+		TTL    string `json:"ttl"`
+		HL     bool   `json:"hl"`
+		Burn   bool   `json:"burn"`
+		Public bool   `json:"public"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
@@ -721,27 +723,56 @@ func create(dir string, owns *shareIndex) http.HandlerFunc {
 			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", maxTTL))
 			return
 		}
+		if req.Public && !publicPastesOn() {
+			httpError(w, 400, "public pastes are disabled on this instance")
+			return
+		}
+		if req.Public {
+			// accounts-only: a public paste carries the creator's identity row,
+			// anonymous creation stays ciphertext-only
+			if owns == nil || owns.sess.identFrom(r) == nil {
+				httpError(w, 403, "sign in to create a public paste")
+				return
+			}
+			if req.Salt != "" {
+				httpError(w, 400, "public pastes cannot be passphrase-protected")
+				return
+			}
+		}
 		if !owns.mayCreate(r) {
 			httpError(w, 403, "share limit reached for this account")
 			return
 		}
-		raw, err := base64.RawURLEncoding.DecodeString(req.Data)
-		if err != nil || len(raw) < 12+16 { // iv + GCM tag minimum
-			httpError(w, 400, "data must be base64url(iv || ciphertext)")
-			return
-		}
-		if len(raw) > maxData {
-			httpError(w, 400, "paste too large (64 KiB cap)")
-			return
-		}
-		if req.Salt != "" {
-			salt, err := base64.RawURLEncoding.DecodeString(req.Salt)
-			if err != nil || len(salt) < 8 || len(salt) > 32 {
-				httpError(w, 400, "salt must be 8-32 raw bytes, base64url")
+		if req.Public {
+			// plaintext lane: no base64url, no IV - the creator chose to skip
+			// encryption; the server stores exactly what was sent
+			if req.Data == "" {
+				httpError(w, 400, "paste text must not be empty")
 				return
 			}
+			if len(req.Data) > maxData {
+				httpError(w, 400, "paste too large (64 KiB cap)")
+				return
+			}
+		} else {
+			raw, err := base64.RawURLEncoding.DecodeString(req.Data)
+			if err != nil || len(raw) < 12+16 { // iv + GCM tag minimum
+				httpError(w, 400, "data must be base64url(iv || ciphertext)")
+				return
+			}
+			if len(raw) > maxData {
+				httpError(w, 400, "paste too large (64 KiB cap)")
+				return
+			}
+			if req.Salt != "" {
+				salt, err := base64.RawURLEncoding.DecodeString(req.Salt)
+				if err != nil || len(salt) < 8 || len(salt) > 32 {
+					httpError(w, 400, "salt must be 8-32 raw bytes, base64url")
+					return
+				}
+			}
 		}
-		b, _ := json.Marshal(paste{Data: req.Data, Salt: req.Salt, HL: req.HL, Burn: req.Burn, Expires: time.Now().Add(ttl).Unix()})
+		b, _ := json.Marshal(paste{Data: req.Data, Salt: req.Salt, HL: req.HL, Burn: req.Burn, Public: req.Public, Expires: time.Now().Add(ttl).Unix()})
 		id := newID(dir)
 		if err := os.WriteFile(filepath.Join(dir, id+".json"), b, 0o600); err != nil {
 			log.Print(err)
@@ -812,7 +843,7 @@ func readAPI(dir string) http.HandlerFunc {
 				os.WriteFile(path, b, 0o600)
 			}
 		}
-		out := map[string]any{"salt": p.Salt, "hl": p.HL, "burn": p.Burn, "expires": p.Expires, "views": p.Views}
+		out := map[string]any{"salt": p.Salt, "hl": p.HL, "burn": p.Burn, "expires": p.Expires, "views": p.Views, "public": p.Public}
 		if p.Len > 0 {
 			out["len"] = p.Len
 		} else {
@@ -1847,7 +1878,7 @@ func (si *shareIndex) list() http.HandlerFunc {
 			if p.Len > 0 {
 				kind = "bundle"
 			}
-			out = append(out, map[string]any{"id": name, "kind": kind, "burn": p.Burn, "expires": p.Expires, "views": p.Views})
+			out = append(out, map[string]any{"id": name, "kind": kind, "burn": p.Burn, "expires": p.Expires, "views": p.Views, "public": p.Public})
 		}
 		respond(w, 200, out)
 	}
@@ -1858,6 +1889,16 @@ func (si *shareIndex) list() http.HandlerFunc {
 // always closes; USER_REGISTRATION=false (regFirstOnly) closes once an
 // identity exists - the first user bootstraps, then the door shuts. Existing
 // sessions can always attach more passkeys; fresh accounts cannot.
+
+// publicPastesOn: opt-in PUBLIC pastes - the creator's slider skips client
+// encryption and the server stores plaintext (creator's explicit choice,
+// accounts-only creation). Dynamic read like REG_OPEN so the env knob is
+// restart-free and testable; USER_ACCOUNTS=false kills the feature entirely
+// (public requires a signed-in identity by definition).
+func publicPastesOn() bool {
+	return accountsOn && envBool("PUBLIC_PASTES", true)
+}
+
 func registrationOpen(identCount int) bool {
 	if !accountsOn {
 		return false

@@ -396,6 +396,120 @@ func initUpload(t *testing.T, h http.Handler, body string) (struct {
 	return out, rec
 }
 
+// --- public pastes: opt-in plaintext lane, accounts-only, PUBLIC_PASTES switch ---
+
+// postAs: POST with a session cookie (the public surface is accounts-only)
+func postAs(t *testing.T, h http.Handler, path, body, cookie string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	if cookie != "" {
+		req.Header.Add("Cookie", cookie)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestPublicPaste(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	// signed-in public create: plaintext stored verbatim, flag echoed
+	rec := postAs(t, h, "/api/paste", `{"data":"hello public world","ttl":"1h","public":true}`, cookie)
+	if rec.Code != 200 {
+		t.Fatalf("public create: got %d %s", rec.Code, rec.Body)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	rec = get(h, "/api/paste/"+created.ID)
+	var meta struct {
+		Data   string `json:"data"`
+		Salt   string `json:"salt"`
+		Public bool   `json:"public"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &meta)
+	if rec.Code != 200 || meta.Data != "hello public world" || !meta.Public || meta.Salt != "" {
+		t.Fatalf("public meta: got %d %+v", rec.Code, meta)
+	}
+
+	// the dashboard row carries the public marker (accounts-only surface)
+	req := httptest.NewRequest("GET", "/api/shares", nil)
+	req.Header.Add("Cookie", cookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), created.ID) || !strings.Contains(rec.Body.String(), `"public":true`) {
+		t.Fatalf("share row missing public flag: %s", rec.Body)
+	}
+
+	// public + burn: read-then-delete still applies
+	rec = postAs(t, h, "/api/paste", `{"data":"burn me","ttl":"1h","public":true,"burn":true}`, cookie)
+	if rec.Code != 200 {
+		t.Fatalf("public burn create: got %d %s", rec.Code, rec.Body)
+	}
+	var burned struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &burned)
+	if rec := get(h, "/api/paste/"+burned.ID); rec.Code != 200 {
+		t.Fatalf("public burn first read: got %d", rec.Code)
+	}
+	if rec := get(h, "/api/paste/"+burned.ID); rec.Code != 404 {
+		t.Fatalf("public burn second read: got %d, want 404", rec.Code)
+	}
+}
+
+func TestPublicGuards(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	// abuse case: anonymous public create - the plaintext lane is accounts-only
+	if rec := postAs(t, h, "/api/paste", `{"data":"x","ttl":"1h","public":true}`, ""); rec.Code != 403 {
+		t.Fatalf("anon public create: got %d, want 403", rec.Code)
+	}
+	// passphrase + public is a contradiction
+	if rec := postAs(t, h, "/api/paste", `{"data":"x","ttl":"1h","public":true,"salt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`, cookie); rec.Code != 400 {
+		t.Fatalf("public with salt: got %d, want 400", rec.Code)
+	}
+	// empty text
+	if rec := postAs(t, h, "/api/paste", `{"data":"","ttl":"1h","public":true}`, cookie); rec.Code != 400 {
+		t.Fatalf("empty public text: got %d, want 400", rec.Code)
+	}
+	// oversize plaintext: same 64 KiB cap as ciphertext
+	big := `{"data":"` + strings.Repeat("a", 64<<10+1) + `","ttl":"1h","public":true}`
+	if rec := postAs(t, h, "/api/paste", big, cookie); rec.Code != 400 {
+		t.Fatalf("oversize public text: got %d, want 400", rec.Code)
+	}
+	// data that would fail the base64url check is fine on the plaintext lane
+	rec := postAs(t, h, "/api/paste", `{"data":"not base64url at all!","ttl":"1h","public":true}`, cookie)
+	if rec.Code != 200 {
+		t.Fatalf("plaintext with spaces/punct: got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestPublicDisabled(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+	t.Setenv("PUBLIC_PASTES", "false")
+
+	// signed-in or not: the plaintext lane is off, generic 400
+	if rec := postAs(t, h, "/api/paste", `{"data":"x","ttl":"1h","public":true}`, cookie); rec.Code != 400 {
+		t.Fatalf("disabled public create: got %d, want 400", rec.Code)
+	}
+	// capability probe carries the switch so the client hides the slider
+	rec := get(h, "/api/gate")
+	if !strings.Contains(rec.Body.String(), `"public":false`) {
+		t.Fatalf("gate public flag: %s", rec.Body)
+	}
+}
+
 func TestUploadRoundTrip(t *testing.T) {
 	tinyChunks(t)
 	h := build(t.TempDir(), "")

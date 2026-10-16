@@ -16,6 +16,7 @@ export interface UploadResult {
   id: string; // finished paste id
   keyB64: string; // fragment key for random-key shares ("" for passphrase shares)
   pass: string; // the passphrase (kept in-memory client-side only)
+  pub: false; // bundles are never public: uploads carry no plaintext lane
 }
 
 export interface UploadOpts {
@@ -153,7 +154,7 @@ export async function uploadBundle(o: UploadOpts): Promise<UploadResult> {
     throw new Error(body.error ?? "finish failed");
   }
   const finBody = (await fin.json()) as { id: string };
-  return { id: finBody.id, keyB64, pass: o.pass };
+  return { id: finBody.id, keyB64, pass: o.pass, pub: false };
 }
 
 function jsonHeaders(): Record<string, string> {

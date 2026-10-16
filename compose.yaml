@@ -16,6 +16,7 @@ services:
     #   MAX_TTL_DAYS: "30"            # share-time ceiling in days (1..366)
     #   MAX_SHARES_PER_ACCOUNT: "0"   # active shares per account; 0 = unlimited
     #   REG_OPEN: "false"             # static registration lock; sign-ins stay open
+    #   PUBLIC_PASTES: "true"         # "false" removes the public-paste slider (public needs accounts anyway)
     #   MAX_UPLOAD: "104857600"       # bytes per share; default 100 MiB
     #   CHUNK: "8388608"              # bytes per chunk; default 8 MiB
 
