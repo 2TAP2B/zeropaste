@@ -301,6 +301,36 @@ func TestPathValueAbuse(t *testing.T) {
 	}
 }
 
+// Telegram (and other scrapers) reject relative og:image; the index must ship
+// absolute preview URLs derived from the request. abuse case: a crafted Host
+// header only shapes a meta tag on the attacker's own request.
+func TestOgPreviewURLs(t *testing.T) {
+	h := build(t.TempDir(), "")
+	rec := get(h, "/")
+	body := rec.Body.String()
+	if !strings.Contains(body, `content="http://example.com/assets/og.png"`) {
+		t.Fatal("og:image not absolute for the request host")
+	}
+	if strings.Contains(body, `content="/assets/og.png"`) {
+		t.Fatal("relative og:image survived the rewrite")
+	}
+	if !strings.Contains(body, `<meta property="og:url" content="http://example.com/">`) {
+		t.Fatal("og:url missing or not absolute")
+	}
+	// behind a TLS-terminating proxy the derived origin must be https
+	req := httptest.NewRequest("GET", "/p/abcdefghijk", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if !strings.Contains(body, `content="https://example.com/assets/og.png"`) {
+		t.Fatal("og:image not https behind X-Forwarded-Proto")
+	}
+	if !strings.Contains(body, `content="https://example.com/p/abcdefghijk"`) {
+		t.Fatal("og:url does not carry the paste path")
+	}
+}
+
 func TestIndexServed(t *testing.T) {
 	h := build(t.TempDir(), "")
 	for _, path := range []string{"/", "/p/whatever"} {

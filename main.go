@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"log"
@@ -635,7 +636,32 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(indexHTML)
+	// scrapers (Telegram outright rejects relative og:image) need an absolute
+	// preview origin. There is deliberately no base-URL config - it is derived
+	// per request from Host + scheme (the reverse proxy already reveals both)
+	// and never stored or logged. A crafted Host only shapes a meta tag on the
+	// attacker's own request; crawlers resolve the real domain via DNS.
+	base := html.EscapeString(ogBaseURL(r))
+	page := strings.ReplaceAll(string(indexHTML),
+		`content="/assets/og.png"`,
+		`content="`+base+`/assets/og.png"`)
+	page = strings.Replace(page,
+		`<meta property="og:image:alt" content="zeropaste - zero-knowledge pastes">`,
+		`<meta property="og:image:alt" content="zeropaste - zero-knowledge pastes">`+"\n"+
+			`<meta property="og:url" content="`+base+html.EscapeString(r.URL.Path)+`">`,
+		1)
+	w.Write([]byte(page))
+}
+
+// ogBaseURL mirrors the cookie Secure logic: direct TLS or the proxy's
+// X-Forwarded-Proto; plain HTTP instances stay plain (previews only work for
+// scrapers over HTTPS anyway, which is the deployment's TLS concern).
+func ogBaseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
 }
 
 func assets() http.Handler {
