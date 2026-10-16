@@ -113,13 +113,13 @@
         public paste
       </button>
       <input type="password" id="pass" placeholder="optional passphrase - protects the link" autocomplete="new-password">
+      <input type="text" id="pubslug" class="hidden" placeholder="custom link name (optional)" maxlength="16" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Custom link name for the public paste" title="8-16 chars: a-z, A-Z, 0-9, '-' or '_'">
     </div>
-    <div id="pubnote" class="hint danger hidden">public paste: stored UNENCRYPTED - anyone with the link can read it.</div>
     <div class="row">
       <button class="primary" id="create">Encrypt & share</button>
     </div>
     <div id="composeerr" class="hint danger hidden"></div>
-    <div class="hint">With a passphrase the link alone is useless; share it over a different channel. The passphrase never reaches the server.</div>
+    <div class="hint" id="passhint">With a passphrase the link alone is useless; share it over a different channel. The passphrase never reaches the server.</div>
   </section>
 
   <!-- link after create -->

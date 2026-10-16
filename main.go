@@ -706,6 +706,7 @@ func create(dir string, owns *shareIndex) http.HandlerFunc {
 		HL     bool   `json:"hl"`
 		Burn   bool   `json:"burn"`
 		Public bool   `json:"public"`
+		Slug   string `json:"slug"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
@@ -738,6 +739,15 @@ func create(dir string, owns *shareIndex) http.HandlerFunc {
 				httpError(w, 400, "public pastes cannot be passphrase-protected")
 				return
 			}
+			if req.Slug != "" && !validID(req.Slug) {
+				// the slug becomes the /p/ path segment, so it must satisfy the
+				// very gate that validates those paths (sole traversal defense)
+				httpError(w, 400, "slug must be 8-16 chars: a-z, A-Z, 0-9, '-' or '_'")
+				return
+			}
+		} else if req.Slug != "" {
+			httpError(w, 400, "slug is only supported for public pastes")
+			return
 		}
 		if !owns.mayCreate(r) {
 			httpError(w, 403, "share limit reached for this account")
@@ -773,11 +783,34 @@ func create(dir string, owns *shareIndex) http.HandlerFunc {
 			}
 		}
 		b, _ := json.Marshal(paste{Data: req.Data, Salt: req.Salt, HL: req.HL, Burn: req.Burn, Public: req.Public, Expires: time.Now().Add(ttl).Unix()})
-		id := newID(dir)
-		if err := os.WriteFile(filepath.Join(dir, id+".json"), b, 0o600); err != nil {
-			log.Print(err)
-			httpError(w, 500, "could not store paste")
-			return
+		var id string
+		if req.Slug != "" {
+			// custom slug: O_EXCL turns a lost race into 409, never a silent overwrite
+			id = req.Slug
+			f, err := os.OpenFile(filepath.Join(dir, id+".json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+			if os.IsExist(err) {
+				httpError(w, 409, "this slug is already taken")
+				return
+			}
+			if err != nil {
+				log.Print(err)
+				httpError(w, 500, "could not store paste")
+				return
+			}
+			_, werr := f.Write(b)
+			f.Close()
+			if werr != nil {
+				log.Print(werr)
+				httpError(w, 500, "could not store paste")
+				return
+			}
+		} else {
+			id = newID(dir)
+			if err := os.WriteFile(filepath.Join(dir, id+".json"), b, 0o600); err != nil {
+				log.Print(err)
+				httpError(w, 500, "could not store paste")
+				return
+			}
 		}
 		if owns != nil {
 			owns.record(r, id) // dashboard row for signed-in creators

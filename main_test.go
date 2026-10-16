@@ -492,6 +492,54 @@ func TestPublicGuards(t *testing.T) {
 	}
 }
 
+// custom slugs: public-only, validID-shaped (they become /p/ path segments),
+// atomically claimed - a lost race is 409, never a silent overwrite
+func TestPublicSlug(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	rec := postAs(t, h, "/api/paste", `{"data":"slugged paste","ttl":"1h","public":true,"slug":"my-notes-42"}`, cookie)
+	if rec.Code != 200 {
+		t.Fatalf("slug create: got %d %s", rec.Code, rec.Body)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.ID != "my-notes-42" {
+		t.Fatalf("slug ignored: %q", created.ID)
+	}
+	if rec := get(h, "/api/paste/my-notes-42"); rec.Code != 200 || !strings.Contains(rec.Body.String(), "slugged paste") {
+		t.Fatalf("slug meta read: got %d %s", rec.Code, rec.Body)
+	}
+	// the /p/ page itself serves (validID passes for the slug)
+	if rec := get(h, "/p/my-notes-42"); rec.Code != 200 {
+		t.Fatalf("slug page: got %d, want 200", rec.Code)
+	}
+
+	// duplicate slug -> 409, original untouched
+	if rec := postAs(t, h, "/api/paste", `{"data":"hijack","ttl":"1h","public":true,"slug":"my-notes-42"}`, cookie); rec.Code != 409 {
+		t.Fatalf("duplicate slug: got %d, want 409", rec.Code)
+	}
+	if rec := get(h, "/api/paste/my-notes-42"); !strings.Contains(rec.Body.String(), "slugged paste") {
+		t.Fatalf("original paste clobbered: %s", rec.Body)
+	}
+
+	// bad shapes: too short, bad charset, too long
+	for _, bad := range []string{"short", "has/slash", "way-way-way-too-long-slug"} {
+		body := fmt.Sprintf(`{"data":"x","ttl":"1h","public":true,"slug":%q}`, bad)
+		if rec := postAs(t, h, "/api/paste", body, cookie); rec.Code != 400 {
+			t.Fatalf("bad slug %q: got %d, want 400", bad, rec.Code)
+		}
+	}
+	// slugs are public-only
+	if rec := postAs(t, h, "/api/paste", fmt.Sprintf(`{"data":%q,"ttl":"1h","slug":"enc-slug-1"}`, fakePayload()), cookie); rec.Code != 400 {
+		t.Fatalf("slug on encrypted paste: got %d, want 400", rec.Code)
+	}
+}
+
 func TestPublicDisabled(t *testing.T) {
 	dir := t.TempDir()
 	s := testSession(t, dir)

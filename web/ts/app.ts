@@ -137,7 +137,12 @@ function syncPublicUI(): void {
   const pass = $("pass") as HTMLInputElement;
   pass.disabled = on;
   if (on) pass.value = "";
-  $("pubnote").classList.toggle("hidden", !on);
+  pass.classList.toggle("hidden", on);
+  const slug = $("pubslug") as HTMLInputElement;
+  slug.classList.toggle("hidden", !on);
+  if (!on) slug.value = "";
+  $("create").textContent = on ? "Share" : "Encrypt & share";
+  $("passhint").classList.toggle("hidden", on); // passphrase education is noise in the public lane
   dropzone.classList.toggle("hidden", on); // public is text-only in v0.10
   if (on && picked.length > 0) {
     for (const f of picked) dropThumb(f); // attachments cannot ride a plaintext paste
@@ -191,10 +196,20 @@ async function createPaste(text: string): Promise<{ id: string; keyB64: string; 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const site = siteKey.get();
   if (site) headers.Authorization = "Bearer " + site;
+  const slugInput = $("pubslug") as HTMLInputElement; // DOM: $ returns Element, .value needs the input type
+  const slug = pub ? slugInput.value.trim() : "";
   const res = await fetch("/api/paste", {
     method: "POST",
     headers,
-    body: JSON.stringify({ data: payload, salt, ttl: ($("ttl") as HTMLInputElement).value, hl: true, burn: burnOn(), public: pub }),
+    body: JSON.stringify({
+      data: payload,
+      salt,
+      ttl: ($("ttl") as HTMLInputElement).value,
+      hl: true,
+      burn: burnOn(),
+      public: pub,
+      ...(pub && slug ? { slug } : {}),
+    }),
   });
   if (res.status === 401) {
     // stale or hand-forged site key: force the gate screen again
