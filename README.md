@@ -18,7 +18,7 @@ Self-hosted, zero-knowledge paste sharing in a single Go binary: the browser enc
 - **Single binary** - all frontend assets embedded, no CDN calls anywhere
 - **Zero-knowledge** - per-paste random key in the URL fragment, stripped from the bar after decrypt
 - **Passphrase mode** - PBKDF2-SHA-256, 600k iterations + random salt; the link alone is useless
-- **Public pastes (opt-in)** - flip the slider for a plaintext share: no key, bare link, optional custom slug (`/p/my-notes-42`); accounts-only, per-instance switch (`PUBLIC_PASTES`), clearly labeled in the UI
+- **Public pastes (opt-in)** - flip the slider for a plaintext share: no key, bare link, optional custom slug (`/p/my-notes-42`); text and file bundles ride the same plaintext lane; accounts-only, per-instance switch (`PUBLIC_PASTES`), clearly labeled in the UI
 - **Burn after reading, free-form TTL** - `10m` to `30 days` (`MAX_TTL_DAYS`), swept by a janitor
 - **Encrypted file bundles** - client-side manifests, image thumbnails, click-to-open lightbox
 - **Reverse shares** - drop links that collect uploads from others (`/r/<slug>`); every arrival arrives encrypted, only your browser holds the key

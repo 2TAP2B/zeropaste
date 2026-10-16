@@ -486,7 +486,7 @@ func build(dir, createKey string) http.Handler {
 	mux.Handle("GET /api/paste/{id}", secure(hf(readAPI(dir))))
 	mux.Handle("GET /api/paste/{id}/blob", secure(hf(readBlob(dir))))
 	mux.Handle("DELETE /api/paste/{id}", secure(hf(deleteAPI(dir))))
-	mux.Handle("POST /api/uploads", secure(rl.guard(authGate(createKey, hf(uploadInit(dir))))))
+	mux.Handle("POST /api/uploads", secure(rl.guard(authGate(createKey, hf(uploadInit(dir, owns))))))
 	mux.Handle("PUT /api/uploads/{id}/{n}", secure(authGate(createKey, hf(uploadChunk(dir)))))
 	mux.Handle("DELETE /api/uploads/{id}", secure(hf(uploadAbort(dir))))
 	mux.Handle("POST /api/uploads/{id}/finish", secure(rl.guard(authGate(createKey, hf(uploadFinish(dir, owns))))))
@@ -977,6 +977,12 @@ type uprec struct {
 	Salt    string `json:"salt,omitempty"`
 	Burn    bool   `json:"burn"`
 	Created int64  `json:"created"`
+	Public  bool   `json:"public,omitempty"` // plaintext lane: init gated on session + switch, finish re-checks
+	Slug    string `json:"slug,omitempty"`   // custom link name, claimed at finish (blob first, then meta O_EXCL)
+	// Tombstone: slugged sessions cannot be removed at finish (the second
+	// finish must still answer 200 with the slug). The dir lingers until the
+	// sweep reaps it by age; chunk PUTs to a finished session 404 via this.
+	Finished string `json:"finished,omitempty"`
 }
 
 func chunksFor(total, chunk int64) int64 {
@@ -985,12 +991,14 @@ func chunksFor(total, chunk int64) int64 {
 
 // uploadInit creates an upload session: uploads/<id>/ holds the manifest and
 // one file per chunk. Body-session ids share paste-id secrecy (capability).
-func uploadInit(dir string) http.HandlerFunc {
+func uploadInit(dir string, owns *shareIndex) http.HandlerFunc {
 	type req struct {
-		Len  int64  `json:"len"`
-		TTL  string `json:"ttl"`
-		Salt string `json:"salt"`
-		Burn bool   `json:"burn"`
+		Len    int64  `json:"len"`
+		TTL    string `json:"ttl"`
+		Salt   string `json:"salt"`
+		Burn   bool   `json:"burn"`
+		Public bool   `json:"public"`
+		Slug   string `json:"slug"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
@@ -1001,6 +1009,29 @@ func uploadInit(dir string) http.HandlerFunc {
 		}
 		if _, ok := parseTTL(req.TTL); !ok {
 			httpError(w, 400, fmt.Sprintf("ttl must be a burn time like 10m, 6h or 1d (1 minute to %d days)", maxTTL))
+			return
+		}
+		if req.Public {
+			// mirrors create(): the plaintext lane is accounts-only and
+			// instance-tunable; slug rules identical to the text lane
+			if !publicPastesOn() {
+				httpError(w, 400, "public pastes are disabled on this instance")
+				return
+			}
+			if owns == nil || owns.sess.identFrom(r) == nil {
+				httpError(w, 403, "sign in to create a public paste")
+				return
+			}
+			if req.Salt != "" {
+				httpError(w, 400, "public pastes cannot be passphrase-protected")
+				return
+			}
+			if req.Slug != "" && !validID(req.Slug) {
+				httpError(w, 400, "slug must be 8-16 chars: a-z, A-Z, 0-9, '-' or '_'")
+				return
+			}
+		} else if req.Slug != "" {
+			httpError(w, 400, "slug is only supported for public pastes")
 			return
 		}
 		if req.Salt != "" {
@@ -1027,7 +1058,7 @@ func uploadInit(dir string) http.HandlerFunc {
 			httpError(w, 500, "could not store upload")
 			return
 		}
-		b, _ := json.Marshal(uprec{Len: req.Len, TTL: req.TTL, Salt: req.Salt, Burn: req.Burn, Created: time.Now().Unix()})
+		b, _ := json.Marshal(uprec{Len: req.Len, TTL: req.TTL, Salt: req.Salt, Burn: req.Burn, Created: time.Now().Unix(), Public: req.Public, Slug: req.Slug})
 		if err := os.WriteFile(filepath.Join(rd, "upload.json"), b, 0o600); err != nil {
 			log.Print(err)
 			httpError(w, 500, "could not store upload")
@@ -1067,6 +1098,10 @@ func uploadChunk(dir string) http.HandlerFunc {
 		var u uprec
 		if json.Unmarshal(b, &u) != nil {
 			http.NotFound(w, r)
+			return
+		}
+		if u.Finished != "" {
+			http.NotFound(w, r) // session closed by finish; renames land nowhere
 			return
 		}
 		n, err := strconv.Atoi(r.PathValue("n"))
@@ -1123,9 +1158,42 @@ func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		if u.Finished != "" {
+			// tombstoned session (slugged finish already landed): the marker
+			// carries the final id, so a repeat still answers 200 idempotently
+			respond(w, 200, map[string]string{"id": u.Finished})
+			return
+		}
+		finalID := u.Slug
+		if finalID == "" {
+			finalID = id
+		}
+		if u.Public {
+			// init gated auth, but the switch must still hold when the last
+			// chunk lands - mirror of the ttl re-check below
+			if !publicPastesOn() {
+				httpError(w, 400, "public pastes are disabled on this instance")
+				return
+			}
+			if owns.sess.identFrom(r) == nil {
+				httpError(w, 403, "sign in to create a public paste")
+				return
+			}
+		}
 		rd := filepath.Join(dir, "uploads", id)
 		chunks := chunksFor(u.Len, chunkBytes)
-		blob, err := os.OpenFile(filepath.Join(dir, id+".blob"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		blobPath := filepath.Join(dir, finalID+".blob")
+		blobFlags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+		if u.Slug != "" {
+			// slug: exclusive claim on the FINAL blob name - a lost race or a
+			// taken slug is 409, never a clobbered paste
+			blobFlags = os.O_CREATE | os.O_EXCL | os.O_WRONLY
+		}
+		blob, err := os.OpenFile(blobPath, blobFlags, 0o600)
+		if os.IsExist(err) {
+			httpError(w, 409, "this slug is already taken")
+			return
+		}
 		if err != nil {
 			log.Print(err)
 			httpError(w, 500, "could not store paste")
@@ -1166,7 +1234,7 @@ func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
 		}
 		blob.Close()
 		if !ok {
-			os.Remove(filepath.Join(dir, id+".blob")) // parts stay for retry
+			os.Remove(blobPath) // parts stay for retry
 			httpError(w, 400, "upload incomplete or chunk sizes off")
 			return
 		}
@@ -1174,26 +1242,63 @@ func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
 		if ttl < time.Minute || ttl > time.Duration(maxTTL)*24*time.Hour {
 			// the init only shape-checks ttl; the ceiling applies at finish too
 			// or a crafted manifest could set year-long expiry
-			os.Remove(filepath.Join(dir, id+".blob"))
+			os.Remove(blobPath)
 			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", maxTTL))
 			return
 		}
 		if !owns.mayCreate(r) {
+			os.Remove(blobPath) // claimed above: never leak a blob without a meta
 			httpError(w, 403, "share limit reached for this account")
 			return
 		}
-		pb, _ := json.Marshal(paste{Len: u.Len, Salt: u.Salt, Burn: u.Burn, Expires: time.Now().Add(ttl).Unix()})
-		if err := os.WriteFile(filepath.Join(dir, id+".json"), pb, 0o600); err != nil {
-			os.Remove(filepath.Join(dir, id+".blob"))
+		pb, _ := json.Marshal(paste{Len: u.Len, Salt: u.Salt, Burn: u.Burn, Public: u.Public, Expires: time.Now().Add(ttl).Unix()})
+		if u.Slug != "" {
+			// meta is the claim: written last, exclusively - if the slug was
+			// taken by a TEXT paste (no blob to collide), our blob goes away
+			pf, err := os.OpenFile(filepath.Join(dir, u.Slug+".json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+			if os.IsExist(err) {
+				os.Remove(blobPath)
+				httpError(w, 409, "this slug is already taken")
+				return
+			}
+			if err != nil {
+				os.Remove(blobPath)
+				log.Print(err)
+				httpError(w, 500, "could not store paste")
+				return
+			}
+			if _, err := pf.Write(pb); err != nil {
+				pf.Close()
+				os.Remove(filepath.Join(dir, u.Slug+".json"))
+				os.Remove(blobPath)
+				log.Print(err)
+				httpError(w, 500, "could not store paste")
+				return
+			}
+			pf.Close()
+		} else if err := os.WriteFile(filepath.Join(dir, id+".json"), pb, 0o600); err != nil {
+			os.Remove(blobPath)
 			log.Print(err)
 			httpError(w, 500, "could not store paste")
 			return
 		}
 		os.RemoveAll(rd)
-		if owns != nil {
-			owns.record(r, id) // dashboard row for signed-in creators
+		if u.Slug != "" {
+			// keep a tombstone so a repeat finish still answers 200 (the
+			// sweep reaps it by age); non-slug sessions are removed outright
+			u.Finished = finalID
+			if tb, err := json.Marshal(u); err == nil {
+				if err := os.Mkdir(rd, 0o700); err == nil {
+					if err := os.WriteFile(filepath.Join(rd, "upload.json"), tb, 0o600); err != nil {
+						log.Print(err)
+					}
+				}
+			}
 		}
-		respond(w, 200, map[string]string{"id": id})
+		if owns != nil {
+			owns.record(r, finalID) // dashboard row for signed-in creators
+		}
+		respond(w, 200, map[string]string{"id": finalID})
 	}
 }
 

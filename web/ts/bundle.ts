@@ -9,15 +9,15 @@ import { enc, dec } from "./dom";
 
 export interface ManifestThumb {
   mime: string; // always image/jpeg for now
-  size: number; // ciphertext size incl. GCM tag
-  iv: string; // b64u
+  size: number; // ciphertext size incl. GCM tag (raw size on the public lane)
+  iv?: string; // b64u - absent on the public lane (nothing is encrypted)
 }
 
 export interface ManifestFile {
   name: string;
   mime: string;
-  size: number; // ciphertext size incl. 16-byte GCM tag
-  iv: string; // b64u
+  size: number; // ciphertext size incl. 16-byte GCM tag (raw size on the public lane)
+  iv?: string; // b64u - absent on the public lane
   thumb?: ManifestThumb; // downscaled preview, appended after all file ciphertexts
 }
 
@@ -29,9 +29,10 @@ export interface Manifest {
 // preview side cap: cards render this; full bytes decrypt on lightbox/Save only
 const THUMB_MAX_SIDE = 480;
 
-// canvas downscale -> JPEG -> encrypt. null when the file is not a decodable
-// image or the thumbnail would not beat the original in size.
-async function makeThumb(file: File, key: AesKey): Promise<Sealed | null> {
+// canvas downscale -> JPEG. null when the file is not a decodable image or
+// the thumbnail would not beat the original in size. Shared by both lanes:
+// the encrypted path seals the bytes, the public lane appends them as-is.
+async function thumbBytes(file: File): Promise<Uint8Array<ArrayBuffer> | null> {
   if (!/^image\/(jpeg|png|gif|webp)$/.test(file.type)) return null;
   try {
     const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
@@ -47,10 +48,17 @@ async function makeThumb(file: File, key: AesKey): Promise<Sealed | null> {
     bmp.close();
     const blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/jpeg", 0.72));
     if (!blob || blob.size >= file.size) return null; // thumb must earn its keep
-    return await sealBytes(key, new Uint8Array(await blob.arrayBuffer()));
+    return new Uint8Array(await blob.arrayBuffer());
   } catch {
     return null; // no bitmap support / decode failure: reader keeps the old eager path
   }
+}
+
+// encrypted wrapper around thumbBytes
+async function makeThumb(file: File, key: AesKey): Promise<Sealed | null> {
+  const raw = await thumbBytes(file);
+  if (!raw) return null;
+  return sealBytes(key, raw);
 }
 
 export const ENV_TAG = 16; // GCM tag size
@@ -137,4 +145,40 @@ export async function readManifest(
 ): Promise<Manifest> {
   const plain = await openBytes(key, headIv, manifestCt);
   return JSON.parse(dec.decode(plain)) as Manifest;
+}
+
+// ---- public lane: same framing, nothing encrypted ----
+//   u32le(manifestLen) | manifestJSON | file1 | file2 | ... | thumb1 | ...
+// No IVs anywhere: manifest starts right after the u32 (offset 4, not 16).
+
+export function parsePublicHead(head: Uint8Array<ArrayBuffer>): { mlen: number; manifestStart: number } {
+  if (head.length < 4) throw new Error("bundle head short");
+  const mlen = new DataView(head.buffer, head.byteOffset, head.byteLength).getUint32(0, true);
+  return { mlen, manifestStart: 4 };
+}
+
+export async function assembleEnvPublic(
+  note: string,
+  files: File[],
+): Promise<Uint8Array<ArrayBuffer>> {
+  const raw: Uint8Array<ArrayBuffer>[] = [];
+  for (const f of files) raw.push(new Uint8Array(await f.arrayBuffer()));
+  const thumbs: (Uint8Array<ArrayBuffer> | null)[] = [];
+  for (const f of files) thumbs.push(await thumbBytes(f));
+  const manifest: Manifest = {
+    note: note || undefined,
+    files: files.map((f, i) => {
+      const t = thumbs[i];
+      return {
+        name: f.name,
+        mime: f.type || "application/octet-stream",
+        size: raw[i]?.length ?? 0,
+        ...(t ? { thumb: { mime: "image/jpeg", size: t.length } } : {}),
+      };
+    }),
+  };
+  const ms = enc.encode(JSON.stringify(manifest));
+  const parts: Uint8Array<ArrayBuffer>[] = [u32le(ms.length), ms, ...raw];
+  for (const t of thumbs) if (t) parts.push(t);
+  return concatBytes(parts);
 }

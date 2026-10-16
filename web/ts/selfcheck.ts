@@ -102,6 +102,7 @@ export async function selfcheck(): Promise<void> {
       let off = base;
       for (let j = 0; j < i; j++) off += (manifest.files[j] as { size: number }).size;
       const ct = got.subarray(off, off + f.size);
+      if (!f.iv) throw new Error("encrypted manifest entry without iv");
       const iv = bytesFromB64u(f.iv);
       const pt = await openBytes(st.key!, iv, ct);
       const want = new Uint8Array(expected[i]!);

@@ -1,5 +1,5 @@
 import { randomKey, deriveKey, b64uFromBytes, bytesFromB64u, importKeyB64u, AesKey } from "./crypto";
-import { assembleEnv } from "./bundle";
+import { assembleEnv, assembleEnvPublic } from "./bundle";
 
 // Client-side byte cap mirrors the server MAX_UPLOAD default (100 MB). The
 // server is the authority - init rejects oversized shares regardless - and
@@ -13,10 +13,10 @@ export function setClientMaxUpload(bytes: number): void {
 }
 
 export interface UploadResult {
-  id: string; // finished paste id
-  keyB64: string; // fragment key for random-key shares ("" for passphrase shares)
+  id: string; // finished paste id (the slug on slugged sessions)
+  keyB64: string; // fragment key for random-key shares ("" for passphrase/public shares)
   pass: string; // the passphrase (kept in-memory client-side only)
-  pub: false; // bundles are never public: uploads carry no plaintext lane
+  pub: boolean; // public lane: plaintext at rest, no key exists
 }
 
 export interface UploadOpts {
@@ -25,6 +25,8 @@ export interface UploadOpts {
   ttl: string;
   burn: boolean;
   pass: string;
+  pub?: boolean; // public lane: plaintext envelope, accounts-only (server enforces)
+  slug?: string; // custom link name, public lane only (ignored otherwise)
   preKeyB64?: string; // upload under a prepared key (reverse-share uplinks)
   preKey?: AesKey; // import-free variant (passphrase-derived uplink)
   preSalt?: string; // salt stored in the paste meta (passphrase-derived uplink)
@@ -58,46 +60,63 @@ export async function uploadBundle(o: UploadOpts): Promise<UploadResult> {
       throw new Error("combined file size exceeds the share cap");
     }
   }
-  let key: AesKey;
+  if (o.pub && (o.pass || o.preKey || o.preKeyB64 || o.preSalt)) {
+    throw new Error("public pastes cannot be passphrase-protected");
+  }
+  let key: AesKey | null = null;
   let keyB64 = "";
   let saltB64 = "";
   let salt: Uint8Array<ArrayBuffer> | undefined;
-  if (o.preSalt) {
-    // reverse passphrase uplink: the inbox salt is reused so each uploaded
-    // paste carries it and the collector re-opens via the normal passphrase flow
-    salt = bytesFromB64u(o.preSalt);
-    saltB64 = o.preSalt;
-    if (o.pass) throw new Error("a passphrase cannot be combined with a prepared salt");
-  } else {
-    const s = saltIfNeeded(o.pass);
-    if (s.salt) salt = s.salt;
-    saltB64 = s.saltB64 ?? "";
-  }
-  if (o.preKey) {
-    if (o.pass) throw new Error("a passphrase cannot be combined with a prepared key");
-    key = o.preKey;
-  } else if (o.preKeyB64) {
-    // reverse-share flow: the uplink fragment carries this key; reuse it so
-    // the collector can decrypt
-    if (o.pass) throw new Error("a passphrase cannot be combined with a pre-baked key");
-    key = await importKeyB64u(o.preKeyB64);
-    keyB64 = o.preKeyB64;
-  } else if (o.pass) {
-    key = await deriveKey(o.pass, salt as Uint8Array<ArrayBuffer>);
-  } else {
-    const k = await randomKey();
-    key = k.key;
-    keyB64 = k.keyB64;
+  if (!o.pub) {
+    if (o.preSalt) {
+      // reverse passphrase uplink: the inbox salt is reused so each uploaded
+      // paste carries it and the collector re-opens via the normal passphrase flow
+      salt = bytesFromB64u(o.preSalt);
+      saltB64 = o.preSalt;
+      if (o.pass) throw new Error("a passphrase cannot be combined with a prepared salt");
+    } else {
+      const s = saltIfNeeded(o.pass);
+      if (s.salt) salt = s.salt;
+      saltB64 = s.saltB64 ?? "";
+    }
+    if (o.preKey) {
+      if (o.pass) throw new Error("a passphrase cannot be combined with a prepared key");
+      key = o.preKey;
+    } else if (o.preKeyB64) {
+      // reverse-share flow: the uplink fragment carries this key; reuse it so
+      // the collector can decrypt
+      if (o.pass) throw new Error("a passphrase cannot be combined with a pre-baked key");
+      key = await importKeyB64u(o.preKeyB64);
+      keyB64 = o.preKeyB64;
+    } else if (o.pass) {
+      key = await deriveKey(o.pass, salt as Uint8Array<ArrayBuffer>);
+    } else {
+      const k = await randomKey();
+      key = k.key;
+      keyB64 = k.keyB64;
+    }
   }
   o.onProgress?.(0, "encrypt");
-  const blob = await assembleEnv(key, o.note, o.files);
+  // key is assigned by every non-public branch above; the compiler cannot see it
+  const encKey = key as AesKey;
+  const blob = o.pub
+    ? await assembleEnvPublic(o.note, o.files)
+    : await assembleEnv(encKey, o.note, o.files);
   throwIfAborted(o.signal);
 
   const req = await fetch("/api/uploads", {
     method: "POST",
     headers: jsonHeaders(),
-    body: JSON.stringify({ len: blob.length, ttl: o.ttl, burn: o.burn, salt: saltB64 }),
-  });  if (!req.ok) {
+    body: JSON.stringify({
+      len: blob.length,
+      ttl: o.ttl,
+      burn: o.burn,
+      salt: saltB64,
+      public: !!o.pub,
+      slug: o.pub ? (o.slug ?? "") : "",
+    }),
+  });
+  if (!req.ok) {
     throw new Error(((await req.json().catch(() => ({}))) as { error?: string }).error ?? "upload init failed");
   }
   const init = (await req.json()) as { id: string; chunkSize: number; chunks: number };
@@ -154,7 +173,7 @@ export async function uploadBundle(o: UploadOpts): Promise<UploadResult> {
     throw new Error(body.error ?? "finish failed");
   }
   const finBody = (await fin.json()) as { id: string };
-  return { id: finBody.id, keyB64, pass: o.pass, pub: false };
+  return { id: finBody.id, keyB64, pass: o.pass, pub: !!o.pub };
 }
 
 function jsonHeaders(): Record<string, string> {

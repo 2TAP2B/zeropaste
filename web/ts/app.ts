@@ -143,12 +143,6 @@ function syncPublicUI(): void {
   if (!on) slug.value = "";
   $("create").textContent = on ? "Share" : "Encrypt & share";
   $("passhint").classList.toggle("hidden", on); // passphrase education is noise in the public lane
-  dropzone.classList.toggle("hidden", on); // public is text-only in v0.10
-  if (on && picked.length > 0) {
-    for (const f of picked) dropThumb(f); // attachments cannot ride a plaintext paste
-    picked = [];
-    renderChips();
-  }
   validateReady();
 }
 
@@ -260,6 +254,8 @@ $("create").addEventListener("click", async () => {
             ttl: ($("ttl") as HTMLInputElement).value,
             burn: burnOn(),
             pass: ($("pass") as HTMLInputElement).value,
+            pub: publicEnabled && publicOn(),
+            slug: ($("pubslug") as HTMLInputElement).value.trim(),
             onProgress: progress,
             onSession: (id) => (activeUploadId = id),
             signal: activeAbort.signal,

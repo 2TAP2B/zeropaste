@@ -540,6 +540,121 @@ func TestPublicSlug(t *testing.T) {
 	}
 }
 
+// public bundles: plaintext envelope through the STANDARD chunked upload
+// endpoints, accounts-only, optional custom slug claimed at finish
+func TestPublicUpload(t *testing.T) {
+	tinyChunks(t)
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	payload := []byte("hello public file content") // raw bytes, nothing encrypted
+	rec := postAs(t, h, "/api/uploads", fmt.Sprintf(`{"len":%d,"ttl":"1h","public":true,"slug":"files-42"}`, len(payload)), cookie)
+	if rec.Code != 200 {
+		t.Fatalf("public init: got %d %s", rec.Code, rec.Body)
+	}
+	var init struct {
+		ID        string `json:"id"`
+		ChunkSize int64  `json:"chunkSize"`
+		Chunks    int64  `json:"chunks"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &init)
+	for n := int64(0); n < init.Chunks; n++ {
+		off := n * init.ChunkSize
+		end := min(off+init.ChunkSize, int64(len(payload)))
+		if rec := put(t, h, fmt.Sprintf("/api/uploads/%s/%d", init.ID, n), payload[off:end], ""); rec.Code != 204 {
+			t.Fatalf("chunk %d: got %d", n, rec.Code)
+		}
+	}
+	rec = postAs(t, h, "/api/uploads/"+init.ID+"/finish", "", cookie)
+	if rec.Code != 200 {
+		t.Fatalf("public finish: got %d %s", rec.Code, rec.Body)
+	}
+	var fin struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &fin)
+	if fin.ID != "files-42" {
+		t.Fatalf("slug ignored: %q", fin.ID)
+	}
+
+	// meta: len, public, no salt, no data
+	rec = get(h, "/api/paste/files-42")
+	var meta struct {
+		Len    int64  `json:"len"`
+		Public bool   `json:"public"`
+		Salt   string `json:"salt"`
+		Data   string `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &meta)
+	if rec.Code != 200 || meta.Len != int64(len(payload)) || !meta.Public || meta.Salt != "" || meta.Data != "" {
+		t.Fatalf("public bundle meta: got %d %+v", rec.Code, meta)
+	}
+	// range reads return the raw plaintext bytes (paginated at CHUNK)
+	var got []byte
+	for off := int64(0); off < int64(len(payload)); {
+		rec = get(h, "/api/paste/files-42/blob?offset="+fmt.Sprint(off))
+		if rec.Code != 200 || rec.Body.Len() == 0 {
+			t.Fatalf("public range read at %d: got %d %q", off, rec.Code, rec.Body.String())
+		}
+		got = append(got, rec.Body.Bytes()...)
+		off += int64(rec.Body.Len())
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("public range reads lonely: got %q, want %q", got, payload)
+	}
+	// the /p/ page serves and double finish is idempotent under the slug
+	if rec := get(h, "/p/files-42"); rec.Code != 200 {
+		t.Fatalf("slug page: got %d, want 200", rec.Code)
+	}
+	if rec := postAs(t, h, "/api/uploads/"+init.ID+"/finish", "", cookie); rec.Code != 200 {
+		t.Fatalf("double finish: got %d, want 200", rec.Code)
+	}
+
+	// abuse cases: anonymous, passphrase pairing, bad slug
+	if rec := postAs(t, h, "/api/uploads", `{"len":10,"ttl":"1h","public":true}`, ""); rec.Code != 403 {
+		t.Fatalf("anon public init: got %d, want 403", rec.Code)
+	}
+	if rec := postAs(t, h, "/api/uploads", `{"len":10,"ttl":"1h","public":true,"salt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`, cookie); rec.Code != 400 {
+		t.Fatalf("public init with salt: got %d, want 400", rec.Code)
+	}
+	if rec := postAs(t, h, "/api/uploads", `{"len":10,"ttl":"1h","public":true,"slug":"nope"}`, cookie); rec.Code != 400 {
+		t.Fatalf("bad slug init: got %d, want 400", rec.Code)
+	}
+	if rec := postAs(t, h, "/api/uploads", `{"len":10,"ttl":"1h","slug":"enc-up-42"}`, cookie); rec.Code != 400 {
+		t.Fatalf("slug on encrypted init: got %d, want 400", rec.Code)
+	}
+
+	// duplicate slug: a second session finishing under a taken name -> 409,
+	// original paste untouched
+	rec = postAs(t, h, "/api/uploads", `{"len":3,"ttl":"1h","public":true,"slug":"files-42"}`, cookie)
+	if rec.Code != 200 {
+		t.Fatalf("dup init: got %d", rec.Code)
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &init)
+	if rec := put(t, h, fmt.Sprintf("/api/uploads/%s/0", init.ID), []byte{1, 2, 3}, ""); rec.Code != 204 {
+		t.Fatalf("dup chunk: got %d", rec.Code)
+	}
+	if rec := postAs(t, h, "/api/uploads/"+init.ID+"/finish", "", cookie); rec.Code != 409 {
+		t.Fatalf("dup finish: got %d, want 409", rec.Code)
+	}
+	if rec := get(h, "/api/paste/files-42"); !strings.Contains(rec.Body.String(), `"len":25`) || !strings.Contains(rec.Body.String(), `"public":true`) {
+		t.Fatalf("original paste clobbered: %s", rec.Body)
+	}
+	// its blob is still readable and intact
+	if rec := get(h, "/api/paste/files-42/blob?offset=0"); rec.Code != 200 || rec.Body.String() != string(payload[:8]) {
+		t.Fatalf("original blob damaged: got %d %q", rec.Code, rec.Body.String())
+	}
+	// the aborted session dies cleanly
+	req2 := httptest.NewRequest("DELETE", "/api/uploads/"+init.ID, nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req2)
+	if rec.Code != 200 {
+		t.Fatalf("abort dup session: got %d", rec.Code)
+	}
+}
+
 func TestPublicDisabled(t *testing.T) {
 	dir := t.TempDir()
 	s := testSession(t, dir)
@@ -555,6 +670,10 @@ func TestPublicDisabled(t *testing.T) {
 	rec := get(h, "/api/gate")
 	if !strings.Contains(rec.Body.String(), `"public":false`) {
 		t.Fatalf("gate public flag: %s", rec.Body)
+	}
+	// the bundle lane is dead too
+	if rec := postAs(t, h, "/api/uploads", `{"len":10,"ttl":"1h","public":true}`, cookie); rec.Code != 400 {
+		t.Fatalf("disabled public upload init: got %d, want 400", rec.Code)
 	}
 }
 

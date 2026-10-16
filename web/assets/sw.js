@@ -6,14 +6,14 @@
    then bump SHELL_VERSION so the old cache is pruned on activate. */
 'use strict';
 
-var SHELL_VERSION = 'v0.9.0';
+var SHELL_VERSION = 'v0.10.2';
 var CACHE = 'zp-shell-' + SHELL_VERSION;
 var SHELL = [
   '/',
-  '/assets/style.css?v=0.9.0',
-  '/assets/app.js?v=0.9.0',
-  '/assets/atom-one-light.min.css?v=0.9.0',
-  '/assets/atom-one-dark.min.css?v=0.9.0',
+  '/assets/style.css?v=0.10.2',
+  '/assets/app.js?v=0.10.2',
+  '/assets/atom-one-light.min.css?v=0.10.2',
+  '/assets/atom-one-dark.min.css?v=0.10.2',
   '/assets/highlight.min.js',
   '/assets/qrcode.min.js',
   '/assets/manifest.webmanifest',
@@ -29,7 +29,9 @@ var SHELL = [
 self.addEventListener('install', function (e) {
   e.waitUntil(
     caches.open(CACHE)
-      .then(function (c) { return c.addAll(SHELL); })
+      // cache:"reload": assets carry max-age=86400, so a plain fetch would
+      // replay the browser HTTP cache and precache stale bytes after a rebuild
+      .then(function (c) { return c.addAll(SHELL.map(function (u) { return new Request(u, { cache: 'reload' }); })); })
       .then(function () { return self.skipWaiting(); })
   );
 });
@@ -68,11 +70,12 @@ self.addEventListener('fetch', function (e) {
   }
 
   // static assets and icons: cache first, refreshed from the network in the
-  // background so index.html's ?v= bump swaps stuff in without a hard reload
+  // background so index.html's ?v= bump swaps stuff in without a hard reload;
+  // cache:"reload" skips the HTTP cache (same rationale as the install)
   if (url.pathname.indexOf('/assets/') === 0) {
     e.respondWith(
       caches.match(req).then(function (hit) {
-        var net = fetch(req).then(function (res) {
+        var net = fetch(req, { cache: 'reload' }).then(function (res) {
           if (res.ok) {
             var copy = res.clone();
             caches.open(CACHE).then(function (c) { return c.put(req, copy); });

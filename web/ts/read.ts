@@ -1,7 +1,7 @@
-import { $ } from "./dom";
+import { $, dec } from "./dom";
 import { deriveKey, open_, bytesFromB64u, AesKey } from "./crypto";
 import { show, copy, humanSize } from "./ui";
-import { readManifest, parseEnvHead, MANIFEST_HEAD, ENV_TAG, Manifest } from "./bundle";
+import { readManifest, parseEnvHead, parsePublicHead, MANIFEST_HEAD, ENV_TAG, Manifest } from "./bundle";
 import { openBytes } from "./crypto";
 
 // copy icon rides on the code block; wired once at import (read view only)
@@ -68,6 +68,9 @@ interface PasteRec extends PasteBody {
 // runs after successful decryption only (burn DELETE must not fire on failed reads)
 function setReadMeta(paste: PasteRec, title: string): void {
   $("readtitle").textContent = title;
+  // public shares open with the globe, not the padlock (text pastes + bundles)
+  document.querySelector(".readtitle .lockico")?.classList.toggle("hidden", !!paste.public);
+  document.querySelector(".readtitle .pubico")?.classList.toggle("hidden", !paste.public);
   if (paste.burn) {
     $("burnnote").textContent = "burn after reading";
     fetch(`/api/paste/${paste.id}`, { method: "DELETE" }).catch(() => {});
@@ -82,8 +85,6 @@ function renderPaste(paste: PasteRec, text: string): void {
   $("pasteview").textContent = text;
   if (paste.hl && window.hljs) hljs?.highlightElement($("pasteview"));
   setReadMeta(paste, paste.public ? "public paste" : "encrypted paste");
-  document.querySelector(".readtitle .lockico")?.classList.toggle("hidden", !!paste.public);
-  document.querySelector(".readtitle .pubico")?.classList.toggle("hidden", !paste.public);
   $("unlock").classList.add("hidden");
   $("readbody").classList.remove("hidden");
 }
@@ -124,28 +125,37 @@ async function fetchRangeExact(
   return out;
 }
 
-// bundle: decrypt the head, render note + table; files decrypt on Save.
-async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
-  const head = await fetchRangeExact(paste, 0, MANIFEST_HEAD);
-  const { mlen } = await parseEnvHead(head);
-  const manifestCt = await fetchRangeExact(paste, 16, mlen);
+// bundle: parse the head, render note + table; files open on Save.
+// key null => public lane: manifest and file bytes are plaintext (head is
+// 4 bytes, no IVs), every open is the identity function.
+async function renderBundle(paste: PasteRec, key: AesKey | null): Promise<void> {
+  const head = await fetchRangeExact(paste, 0, key ? MANIFEST_HEAD : 4);
+  const { mlen, manifestStart } = key ? await parseEnvHead(head) : parsePublicHead(head);
+  const mraw = await fetchRangeExact(paste, manifestStart, mlen);
   let manifest: Manifest;
   try {
-    manifest = await readManifest(key, head.subarray(4, 16), manifestCt);
+    manifest = key
+      ? await readManifest(key, head.subarray(4, 16), mraw)
+      : (JSON.parse(dec.decode(mraw)) as Manifest);
   } catch {
     return fail("Decryption failed - the link was probably altered or truncated.");
   }
   // link validated: bundles burn via this DELETE after the envelope opens
   // note renders through the existing paste-view code block (copy icon rides along)
+  const openBlob = key
+    ? async (data: Uint8Array<ArrayBuffer>, ivB64?: string): Promise<Uint8Array<ArrayBuffer>> =>
+        openBytes(key, bytesFromB64u(ivB64 ?? ""), data)
+    : async (data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> => data;
+  const label = key ? "encrypted bundle" : "public bundle";
   const note = manifest.note ?? "";
   ($("pasteview") as HTMLElement).textContent = note;
   ($("codewrap") as HTMLElement).classList.toggle("hidden", !note);
   const n = manifest.files.length;
-  setReadMeta(paste, n === 1 ? "encrypted bundle · 1 file" : `encrypted bundle · ${n} files`);
+  setReadMeta(paste, `${label} · ${n} file${n === 1 ? "" : "s"}`);
 
   const list = $("filelist") as HTMLElement;
   list.textContent = "";
-  let off = 16 + mlen;
+  let off = manifestStart + mlen;
   // thumbnail block: every file's ciphertext first, then thumbs in manifest order
   let toff = off;
   for (const mf of manifest.files) toff += mf.size;
@@ -166,10 +176,10 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
     save.textContent = "Save";
     save.addEventListener("click", async () => {
       save.disabled = true;
-      save.textContent = "decrypting…";
+      save.textContent = key ? "decrypting…" : "saving…";
       try {
         const data = await fetchRangeExact(paste, start, f.size);
-        const full = await openBytes(key, bytesFromB64u(f.iv), data);
+        const full = await openBlob(data, f.iv);
         const blob = new Blob([full], { type: f.mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -216,7 +226,7 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
           if (fullUrl) return void openLightbox(fullUrl); // already decrypted
           openLightbox(img.src); // thumb as instant placeholder
           void fetchRangeExact(paste, start, f.size)
-            .then((d) => openBytes(key, bytesFromB64u(f.iv), d))
+            .then((d) => openBlob(d, f.iv))
             .then((full) => {
               fullUrl = URL.createObjectURL(new Blob([full], { type: f.mime }));
               const box = $("imgbox") as HTMLDialogElement;
@@ -230,8 +240,8 @@ async function renderBundle(paste: PasteRec, key: AesKey): Promise<void> {
         row.classList.add("filecard-flat");
       };
       const decode = t
-        ? fetchRangeExact(paste, thumbStart, t.size).then((d) => openBytes(key, bytesFromB64u(t.iv), d))
-        : fetchRangeExact(paste, start, f.size).then((d) => openBytes(key, bytesFromB64u(f.iv), d));
+        ? fetchRangeExact(paste, thumbStart, t.size).then((d) => openBlob(d, t.iv))
+        : fetchRangeExact(paste, start, f.size).then((d) => openBlob(d, f.iv));
       void decode
         .then((full) => {
           img.src = URL.createObjectURL(new Blob([full], { type: t ? "image/jpeg" : f.mime }));
@@ -272,9 +282,14 @@ export async function readView(): Promise<void> {
     return fail((e as { message?: string }).message ?? "Could not fetch the paste.");
   }
 
-  // public lane: the payload IS the text - no key exists, nothing to decrypt
+  // public lane: the payload IS the content - no key exists, nothing to decrypt
   if (paste.public) {
-    renderPaste(paste, paste.data);
+    if (paste.len) {
+      paste.data = ""; // bundle metas carry no text payload
+      await renderBundle(paste, null);
+    } else {
+      renderPaste(paste, paste.data);
+    }
     return;
   }
 
