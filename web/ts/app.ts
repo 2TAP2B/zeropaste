@@ -315,9 +315,6 @@ async function gateFlow(): Promise<void> {
     };
     publicEnabled = cfg.public === true;
     ($("pub") as HTMLButtonElement).classList.toggle("hidden", !publicEnabled);
-    if (cfg.maxTtlDays && cfg.maxTtlDays !== 30) {
-      $("ttllabel").textContent = "burn paste after (max " + cfg.maxTtlDays + "d)";
-    }
     if (cfg.maxUpload) setClientMaxUpload(cfg.maxUpload);
     if (!cfg.enabled) return enterCompose();
     const stored = siteKey.get();

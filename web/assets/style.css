@@ -298,9 +298,6 @@
   .field-label { font-size: .75rem; color: var(--muted); }
   #ttl { width: 68px; padding-left: .55rem; padding-right: .55rem; }
   .burnrow { align-items: flex-end; }
-  /* the label may grow ("burn paste after (max Nd)" on gated instances) but
-     the field must not push the row - the label wraps instead */
-  .burnrow .field { max-width: 4.75rem; }
   .burnrow #pass, .burnrow #pubslug { width: auto; flex: 1 1 10rem; min-width: 7rem; }
   /* compact toggles keep the whole settings row on one desktop line */
   button.toggle { font-size: .8125rem; padding: .55rem .7rem; }
