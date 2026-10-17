@@ -6,7 +6,7 @@
 # zeropaste in one derivation: single Go binary, embedded web/, stdlib only.
 buildGoModule {
   pname = "zeropaste";
-  version = "0.10.2";
+  version = "0.10.3";
   src = ./.;
   # real vendor hash: Go now has the go-webauthn dependency
   vendorHash = "sha256-9/wut8nmHfRSwoTUxf1YgdFqggGe+eh9YCzLLpFFaUU=";

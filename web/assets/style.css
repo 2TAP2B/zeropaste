@@ -296,9 +296,14 @@
   }
   .field { display: flex; flex-direction: column; gap: .3rem; }
   .field-label { font-size: .75rem; color: var(--muted); }
-  #ttl { width: 140px; }
+  #ttl { width: 68px; padding-left: .55rem; padding-right: .55rem; }
   .burnrow { align-items: flex-end; }
-  .burnrow #pass, .burnrow #pubslug { width: auto; flex: 1 1 12rem; min-width: 8rem; }
+  /* the label may grow ("burn paste after (max Nd)" on gated instances) but
+     the field must not push the row - the label wraps instead */
+  .burnrow .field { max-width: 4.75rem; }
+  .burnrow #pass, .burnrow #pubslug { width: auto; flex: 1 1 10rem; min-width: 7rem; }
+  /* compact toggles keep the whole settings row on one desktop line */
+  button.toggle { font-size: .8125rem; padding: .55rem .7rem; }
   input[type="password"], input[type="text"] { cursor: text; width: 100%; }
   input[type="password"]:focus, input[type="text"]:focus { outline: none; border-color: var(--accent); }
   select:hover, button:hover { border-color: var(--accent); }
