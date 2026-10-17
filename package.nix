@@ -6,13 +6,14 @@
 # zeropaste in one derivation: single Go binary, embedded web/, stdlib only.
 buildGoModule {
   pname = "zeropaste";
-  version = "0.10.4";
+  version = "0.10.6";
   src = ./.;
   # real vendor hash: Go now has the go-webauthn dependency
   vendorHash = "sha256-9/wut8nmHfRSwoTUxf1YgdFqggGe+eh9YCzLLpFFaUU=";
 
   env.CGO_ENABLED = "0";
-  ldflags = [ "-s" "-w" ];
+  # the footer shows the installed version; nix checkouts have no .git either
+  ldflags = [ "-s" "-w" "-X main.version=${version}" ];
 
   # go installs the binary after the module path ("paste"), which collides
   # with coreutils paste(1) in PATH - rename it.

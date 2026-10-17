@@ -25,10 +25,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
+	"strings" // runtime/debug: VCS fallback for the footer version
 	"sync"
 	"syscall"
 	"time"
+
+	rdebug "runtime/debug"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -48,6 +50,40 @@ var indexHTML []byte
 
 //go:embed web/assets
 var assetFS embed.FS
+
+// footVer carries the release the running binary was built from: docker and
+// nix builds stamp it with `-X main.version` (their build contexts carry no
+// .git, so the VCS stamp cannot survive the copy), plain source builds leave
+// it empty and fall back to the tag/revision git bakes into buildinfo.
+var (
+	version string // stamp target: -X main.version=<tag>
+	footVer string // resolved once at startup, injected into / by serveIndex
+)
+
+func resolveFootVer() string {
+	if version != "" {
+		return html.EscapeString(version)
+	}
+	var tag, rev string
+	if bi, ok := rdebug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			switch s.Key {
+			case "vcs.tag":
+				tag = s.Value
+			case "vcs.revision":
+				rev = s.Value
+			}
+		}
+	}
+	switch {
+	case tag != "":
+		return html.EscapeString(tag)
+	case len(rev) >= 7:
+		return rev[:7]
+	default:
+		return "dev"
+	}
+}
 
 // ---- reverse share inbox: data/inboxes/<slug>.json, one file per drop ----
 // 0600 like everything else. The inbox is METADATA (ids, sizes, expiry): file
@@ -427,6 +463,7 @@ func init() {
 }
 
 func main() {
+	footVer = resolveFootVer() // one shot, before the server accepts anything
 	dataDir := flag.String("data", "data", "directory for stored ciphertexts")
 	addr := flag.String("addr", "127.0.0.1:8080", "listen address")
 	flag.Parse()
@@ -472,6 +509,9 @@ func main() {
 
 func build(dir, createKey string) http.Handler {
 	hf := func(fn func(http.ResponseWriter, *http.Request)) http.Handler { return http.HandlerFunc(fn) }
+	if footVer == "" {
+		footVer = resolveFootVer() // test path; production main() resolves before listen
+	}
 	rl := newLimiter(30) // pastes per IP per minute
 	sess := newSessions(dir)
 	owns := newShareIndex(dir, sess)
@@ -650,6 +690,12 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 		`<meta property="og:image:alt" content="zeropaste - zero-knowledge pastes">`,
 		`<meta property="og:image:alt" content="zeropaste - zero-knowledge pastes">`+"\n"+
 			`<meta property="og:url" content="`+base+html.EscapeString(r.URL.Path)+`">`,
+		1)
+	// installed version in the footer: build startup stamped footVer (tag,
+	// else short revision, else dev); pre-HTML-escaped
+	page = strings.Replace(page,
+		`<span id="footver">dev</span>`,
+		`<span id="footver">`+footVer+`</span>`,
 		1)
 	w.Write([]byte(page))
 }

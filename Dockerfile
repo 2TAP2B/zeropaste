@@ -3,7 +3,10 @@ FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum main.go ./
 COPY web/ ./web/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/paste .
+# VERSION: the workflow passes the pushed tag; the binary shows it in the
+# footer (the docker build context carries no .git, so VCS stamping is moot)
+ARG VERSION=""
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/paste .
 
 # seeded data dir so named volumes inherit non-root ownership
 FROM alpine AS data

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -341,6 +342,40 @@ func TestIndexServed(t *testing.T) {
 	}
 	if rec := get(h, "/nope"); rec.Code != 404 {
 		t.Fatalf("unknown path: got %d, want 404", rec.Code)
+	}
+}
+
+// the footer carries the installed version: docker/nix builds stamp
+// -X main.version, plain source builds fall back to the VCS tag/revision
+// git bakes into buildinfo
+func TestFooterVersion(t *testing.T) {
+	ver0, foot0 := version, footVer
+	version, footVer = "v9.9.9-test", ""
+	h := build(t.TempDir(), "")
+	rec := get(h, "/p/whatever")   // every SPA route renders the footer
+	version, footVer = ver0, foot0 // restored before any other test can read it
+	m := regexp.MustCompile(`id="footver">([^<]*)<`).FindStringSubmatch(rec.Body.String())
+	if m == nil || m[1] != "v9.9.9-test" {
+		t.Fatalf("stamped footer version: got %v", m)
+	}
+}
+
+// unstamped (plain `go build` in a git tree): the built-in fallback must
+// surface the VCS tag, the short revision, or dev - never leave the
+// placeholder text or an empty chip
+func TestFooterVersionFallback(t *testing.T) {
+	ver0, foot0 := version, footVer
+	version, footVer = "", ""
+	h := build(t.TempDir(), "")
+	rec := get(h, "/")
+	version, footVer = ver0, foot0
+	m := regexp.MustCompile(`id="footver">([^<]*)<`).FindStringSubmatch(rec.Body.String())
+	if m == nil {
+		t.Fatal("footer version span missing entirely")
+	}
+	format := regexp.MustCompile(`^(v\d+\.\d+\.\d+|[0-9a-f]{7}|dev)$`).MatchString
+	if !format(m[1]) {
+		t.Fatalf("footer version %q matches neither tag, revision, nor dev", m[1])
 	}
 }
 
