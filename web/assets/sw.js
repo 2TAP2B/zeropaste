@@ -6,14 +6,14 @@
    then bump SHELL_VERSION so the old cache is pruned on activate. */
 'use strict';
 
-var SHELL_VERSION = 'v0.10.4';
+var SHELL_VERSION = 'v0.10.5';
 var CACHE = 'zp-shell-' + SHELL_VERSION;
 var SHELL = [
   '/',
-  '/assets/style.css?v=0.10.4',
-  '/assets/app.js?v=0.10.4',
-  '/assets/atom-one-light.min.css?v=0.10.4',
-  '/assets/atom-one-dark.min.css?v=0.10.4',
+  '/assets/style.css?v=0.10.5',
+  '/assets/app.js?v=0.10.5',
+  '/assets/atom-one-light.min.css?v=0.10.5',
+  '/assets/atom-one-dark.min.css?v=0.10.5',
   '/assets/highlight.min.js',
   '/assets/qrcode.min.js',
   '/assets/manifest.webmanifest',

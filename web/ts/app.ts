@@ -148,10 +148,8 @@ function syncPublicUI(): void {
 
 function syncPublicAccess(): void {
   const btn = $("pub") as HTMLButtonElement;
-  btn.disabled = !publicEnabled || !signedIn;
-  btn.title = !publicEnabled ? "public pastes are disabled on this instance"
-    : signedIn ? "" : "sign in to create a public paste";
-  if (!publicEnabled || !signedIn) btn.setAttribute("aria-pressed", "false");
+  btn.classList.toggle("hidden", !publicEnabled || !signedIn);
+  if (!publicEnabled || !signedIn) btn.setAttribute("aria-pressed", "false"); // hidden sliders never ride the public lane
   syncPublicUI();
 }
 $("pub").addEventListener("click", () => {
@@ -159,6 +157,7 @@ $("pub").addEventListener("click", () => {
   $("pub").setAttribute("aria-pressed", publicOn() ? "false" : "true");
   syncPublicUI();
 });
+document.addEventListener("zp:me", syncPublicAccess); // refreshMe re-syncs after in-page sign-outs
 
 // submit enabled iff there is something to share
 function validateReady(): void {
@@ -314,7 +313,7 @@ async function gateFlow(): Promise<void> {
       public?: boolean;
     };
     publicEnabled = cfg.public === true;
-    ($("pub") as HTMLButtonElement).classList.toggle("hidden", !publicEnabled);
+    syncPublicAccess(); // visibility = capability + session (refreshMe may have resolved first)
     if (cfg.maxUpload) setClientMaxUpload(cfg.maxUpload);
     if (!cfg.enabled) return enterCompose();
     const stored = siteKey.get();

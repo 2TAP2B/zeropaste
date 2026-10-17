@@ -79,6 +79,7 @@ export async function refreshMe(): Promise<void> {
     const poll = $("accpoll") as HTMLElement;
 
     signedIn = !!me.name;
+    document.dispatchEvent(new CustomEvent("zp:me")); // compose re-syncs the public slider (hidden while signed out)
     // USER_ACCOUNTS=false: the whole identity feature is off - the account
     // button and pane go away entirely (the /dash card adapts in loadDash)
     const accountsOff = me.accounts === false;
