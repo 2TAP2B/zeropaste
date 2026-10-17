@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="web/assets/icon.svg" alt="zeropaste logo - padlock on a dark rounded square in accent purple" width="96">
+</p>
+
 # zeropaste
 
 <p align="center">
