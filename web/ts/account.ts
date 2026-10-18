@@ -667,9 +667,18 @@ async function renderRshares(): Promise<void> {
     const row = document.createElement("div");
     row.className = "revrow";
 
-    // head: chevron + slug + meta + icon actions
+    // head: open-arrow (shares-tab language: leftmost icon opens the link) +
+    // chevron + slug + meta + icon actions
     const head = document.createElement("div");
     head.className = "revhead";
+    const open = document.createElement("a");
+    open.className = "reviconlink";
+    open.href = uplink;
+    open.title = "Open drop link";
+    open.setAttribute("aria-label", "Open drop link");
+    open.target = "_blank";
+    open.rel = "noopener";
+    open.innerHTML = IC.open; // static icon markup only
     const chev = iconBtn("Uploaded files", IC.chev, "rowicon chev");
     chev.setAttribute("aria-expanded", "false");
     const slug = document.createElement("button");
@@ -704,7 +713,7 @@ async function renderRshares(): Promise<void> {
       })();
     });
     acts.append(cp, del);
-    head.append(chev, slug, stats, acts);
+    head.append(open, chev, slug, stats, acts);
     row.append(head);
 
     // collapsible detail: uplink row + full meta + arrivals
