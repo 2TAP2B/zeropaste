@@ -482,26 +482,10 @@ function cfgNote(msg: string): void {
   note.classList.toggle("hidden", msg === "");
 }
 
-// paint the form from the server view; knobs whose file entry is newer than
-// the running process carry restartNeeded at the top level
-const CFG_SRC_LABEL: Record<string, string> = { file: "config file", env: "compose env", default: "default" };
-
+// paint the form from the server view; the note line carries the only
+// operational state the admin needs: a saved-but-not-running draft
 function paintConfig(v: CfgView): void {
   const by: Record<string, CfgKnob> = Object.fromEntries(v.knobs.map((k) => [k.name, k]));
-  const setSrc = (id: string, name: string): void => {
-    const k = by[name];
-    if (!k) return; // server always sends the full set; missing chip is a no-op
-    const s = $(id) as HTMLElement;
-    s.textContent = CFG_SRC_LABEL[k.source] ?? k.source;
-  };
-  setSrc("cfgsrc-create", "CREATE_KEY");
-  setSrc("cfgsrc-open", "REG_OPEN");
-  setSrc("cfgsrc-public", "PUBLIC_PASTES");
-  setSrc("cfgsrc-reg", "USER_REGISTRATION");
-  setSrc("cfgsrc-ttl", "MAX_TTL_DAYS");
-  setSrc("cfgsrc-shares", "MAX_SHARES_PER_ACCOUNT");
-  setSrc("cfgsrc-upload", "MAX_UPLOAD");
-  setSrc("cfgsrc-chunk", "CHUNK");
   const setSwitch = (id: string, name: string): void => {
     const k = by[name];
     if (!k) return;

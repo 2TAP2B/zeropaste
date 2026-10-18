@@ -223,20 +223,13 @@
     display: block; margin-bottom: .5rem; font-size: .72rem;
     letter-spacing: .06em; color: var(--muted); text-transform: uppercase;
   }
-  /* grid keeps every field column-aligned: label | field | unit | chip | clear */
+  /* two-column rows: what the field is for | the field */
   .cfgrow {
-    display: grid; grid-template-columns: minmax(11rem, 1fr) 13.5rem 3.4rem 6rem auto;
+    display: grid; grid-template-columns: minmax(11rem, 1fr) 13.5rem auto;
     gap: .6rem; align-items: center; margin: .5rem 0;
   }
   .cfglabel { min-width: 0; font-size: .8rem; color: var(--text); text-align: left; }
-  .cfglabel code { color: var(--muted); font-size: .68rem; }
   .cfgrow input[type="password"], .cfgrow input[type="number"] { width: 100%; }
-  .cfgunit { font-size: .72rem; color: var(--muted); }
-  .cfgsrc {
-    font-size: .68rem; padding: .18rem .55rem; justify-self: end;
-    border: 1px solid var(--border); border-radius: 999px; color: var(--muted);
-    text-align: center; white-space: nowrap;
-  }
   .cfgclear { font-size: .75rem; padding: .2rem .5rem; justify-self: start; }
   .cfgclear.active { color: var(--danger); border-color: var(--danger); }
   .cfgactions { margin-top: 1.1rem; justify-content: flex-end; }
@@ -256,14 +249,13 @@
   .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @media (max-width: 540px) {
     .cfgrow {
-      grid-template-columns: 1fr auto auto;
-      grid-template-areas: "label label label" "field unit chip";
+      grid-template-columns: 1fr auto;
+      grid-template-areas: "label label" "field clear";
     }
     .cfglabel { grid-area: label; }
     .cfgrow input, .cfgrow .switch { grid-area: field; justify-self: start; width: 100%; }
     .cfgrow .switch { width: 2.9rem; } /* the knob keeps its track size on phones */
-    .cfgunit { grid-area: unit; }
-    .cfgsrc { grid-area: chip; }
+    .cfgclear { grid-area: clear; }
   }
   .theme-toggle .sun { display: none; }
   :root[data-theme="light"] .theme-toggle .sun { display: block; }

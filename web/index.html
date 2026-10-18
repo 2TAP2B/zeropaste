@@ -19,9 +19,9 @@
 <link rel="icon" href="/assets/icon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.10.12" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.10.12" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.10.12">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.10.13" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.10.13" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.10.13">
 </head>
 <body>
 <main>
@@ -296,56 +296,40 @@
             <div class="cfgsection">
             <b>access</b>
             <div class="cfgrow">
-              <label for="cfgcreate" class="cfglabel">gate key <code>CREATE_KEY</code></label>
+              <label for="cfgcreate" class="cfglabel">gate key</label>
               <input type="password" id="cfgcreate" placeholder="unchanged" autocomplete="off">
-              <span class="cfgunit"></span>
-              <span class="cfgsrc" id="cfgsrc-create"></span>
               <button type="button" id="cfgclear" class="cfgclear" title="clear the create-gate passphrase">✕</button>
             </div>
             <div class="cfgrow">
-              <label for="cfgopen" class="cfglabel">sign-ins open <code>REG_OPEN</code></label>
+              <label for="cfgopen" class="cfglabel">sign-ins open</label>
               <button type="button" id="cfgopen" class="switch" role="switch" aria-checked="true" aria-label="sign-ins open"></button>
-              <span class="cfgunit"></span>
-              <span class="cfgsrc" id="cfgsrc-open"></span>
             </div>
             <div class="cfgrow">
-              <label for="cfgpublic" class="cfglabel">public pastes <code>PUBLIC_PASTES</code></label>
+              <label for="cfgpublic" class="cfglabel">public pastes</label>
               <button type="button" id="cfgpublic" class="switch" role="switch" aria-checked="true" aria-label="public pastes"></button>
-              <span class="cfgunit"></span>
-              <span class="cfgsrc" id="cfgsrc-public"></span>
             </div>
             <div class="cfgrow">
-              <label for="cfgreg" class="cfglabel">signup closes after first account <code>USER_REGISTRATION</code></label>
+              <label for="cfgreg" class="cfglabel">signup closes after first account</label>
               <button type="button" id="cfgreg" class="switch" role="switch" aria-checked="false" aria-label="signup closes after first account"></button>
-              <span class="cfgunit"></span>
-              <span class="cfgsrc" id="cfgsrc-reg"></span>
             </div>
           </div>
           <div class="cfgsection">
             <b>limits</b>
             <div class="cfgrow">
-              <label for="cfgttl" class="cfglabel">max ttl <code>MAX_TTL_DAYS</code></label>
+              <label for="cfgttl" class="cfglabel">max ttl (days)</label>
               <input type="number" id="cfgttl" min="1" max="366" step="1" inputmode="numeric">
-              <span class="cfgunit">days</span>
-              <span class="cfgsrc" id="cfgsrc-ttl"></span>
             </div>
             <div class="cfgrow">
-              <label for="cfgshares" class="cfglabel">max shares per account <code>MAX_SHARES_PER_ACCOUNT</code></label>
+              <label for="cfgshares" class="cfglabel">max shares per account (0 = unlimited)</label>
               <input type="number" id="cfgshares" min="0" max="100000" step="1" inputmode="numeric">
-              <span class="cfgunit" id="cfgunit-shares">shares</span>
-              <span class="cfgsrc" id="cfgsrc-shares"></span>
             </div>
             <div class="cfgrow">
-              <label for="cfgupload" class="cfglabel">max upload <code>MAX_UPLOAD</code></label>
+              <label for="cfgupload" class="cfglabel">max upload (bytes)</label>
               <input type="number" id="cfgupload" min="1048576" max="68719476736" step="1048576" inputmode="numeric">
-              <span class="cfgunit">bytes</span>
-              <span class="cfgsrc" id="cfgsrc-upload"></span>
             </div>
             <div class="cfgrow">
-              <label for="cfgchunk" class="cfglabel">chunk size <code>CHUNK</code></label>
+              <label for="cfgchunk" class="cfglabel">chunk size (bytes)</label>
               <input type="number" id="cfgchunk" min="65536" max="67108864" step="65536" inputmode="numeric">
-              <span class="cfgunit">bytes</span>
-              <span class="cfgsrc" id="cfgsrc-chunk"></span>
             </div>
           </div>
           <div class="accrow cfgactions">
@@ -413,6 +397,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.10.12"></script>
+<script src="/assets/app.js?v=0.10.13"></script>
 </body>
 </html>
