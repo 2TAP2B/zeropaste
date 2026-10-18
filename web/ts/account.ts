@@ -535,8 +535,10 @@ function wireConfig(): void {
     if (res?.ok) {
       paintConfig((await res.json()) as CfgView);
     } else {
-      // non-admin session or server unreachable: leave the form inert
-      ($("confedit") as HTMLElement).classList.add("hidden");
+      // non-admin session or server unreachable: keep the card header, drop
+      // the form body so the error line below stays visible
+      const body = document.getElementById("cfgbody");
+      if (body) body.classList.add("hidden");
       cfgError("configuration is unavailable for this session");
     }
   })();
