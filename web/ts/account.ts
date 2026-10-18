@@ -484,13 +484,15 @@ function cfgNote(msg: string): void {
 
 // paint the form from the server view; knobs whose file entry is newer than
 // the running process carry restartNeeded at the top level
+const CFG_SRC_LABEL: Record<string, string> = { file: "config file", env: "compose env", default: "default" };
+
 function paintConfig(v: CfgView): void {
   const by: Record<string, CfgKnob> = Object.fromEntries(v.knobs.map((k) => [k.name, k]));
   const setSrc = (id: string, name: string): void => {
     const k = by[name];
     if (!k) return; // server always sends the full set; missing chip is a no-op
     const s = $(id) as HTMLElement;
-    s.textContent = k.source + (k.source === "file" && v.restartNeeded ? " (needs reboot)" : "");
+    s.textContent = CFG_SRC_LABEL[k.source] ?? k.source;
   };
   setSrc("cfgsrc-create", "CREATE_KEY");
   setSrc("cfgsrc-open", "REG_OPEN");
@@ -500,14 +502,18 @@ function paintConfig(v: CfgView): void {
   setSrc("cfgsrc-shares", "MAX_SHARES_PER_ACCOUNT");
   setSrc("cfgsrc-upload", "MAX_UPLOAD");
   setSrc("cfgsrc-chunk", "CHUNK");
-  const kv = (name: string): boolean | number | undefined => by[name]?.value;
-  ($("cfgopen") as HTMLSelectElement).value = String(kv("REG_OPEN"));
-  ($("cfgpublic") as HTMLSelectElement).value = String(kv("PUBLIC_PASTES"));
-  ($("cfgreg") as HTMLSelectElement).value = String(kv("USER_REGISTRATION"));
-  ($("cfgttl") as HTMLInputElement).value = String(kv("MAX_TTL_DAYS"));
-  ($("cfgshares") as HTMLInputElement).value = String(kv("MAX_SHARES_PER_ACCOUNT"));
-  ($("cfgupload") as HTMLInputElement).value = String(kv("MAX_UPLOAD"));
-  ($("cfgchunk") as HTMLInputElement).value = String(kv("CHUNK"));
+  const setSwitch = (id: string, name: string): void => {
+    const k = by[name];
+    if (!k) return;
+    ($(id) as HTMLElement).setAttribute("aria-checked", String(k.value === true));
+  };
+  setSwitch("cfgopen", "REG_OPEN");
+  setSwitch("cfgpublic", "PUBLIC_PASTES");
+  setSwitch("cfgreg", "USER_REGISTRATION");
+  ($("cfgttl") as HTMLInputElement).value = String(by["MAX_TTL_DAYS"]?.value ?? "");
+  ($("cfgshares") as HTMLInputElement).value = String(by["MAX_SHARES_PER_ACCOUNT"]?.value ?? "");
+  ($("cfgupload") as HTMLInputElement).value = String(by["MAX_UPLOAD"]?.value ?? "");
+  ($("cfgchunk") as HTMLInputElement).value = String(by["CHUNK"]?.value ?? "");
   cfgNote(v.restartNeeded ? "the file holds values the running process has not loaded yet - Save + reboot applies them" : "");
 }
 
@@ -516,12 +522,12 @@ function paintConfig(v: CfgView): void {
 function cfgBody(): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   const create = ($("cfgcreate") as HTMLInputElement).value;
-  if (create || ($("cfgclear") as HTMLInputElement).classList.contains("active")) body.createKey = create;
-  const sel = (id: string): boolean => ($(id) as HTMLSelectElement).value === "true";
+  if (create || ($("cfgclear") as HTMLElement).classList.contains("active")) body.createKey = create;
+  const on = (id: string): boolean => ($(id) as HTMLElement).getAttribute("aria-checked") === "true";
   const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
-  body.regOpen = sel("cfgopen");
-  body.publicPastes = sel("cfgpublic");
-  body.userRegistration = sel("cfgreg");
+  body.regOpen = on("cfgopen");
+  body.publicPastes = on("cfgpublic");
+  body.userRegistration = on("cfgreg");
   body.maxTtlDays = num("cfgttl");
   body.maxShares = Math.round(num("cfgshares"));
   body.maxUpload = Math.round(num("cfgupload"));
@@ -585,6 +591,13 @@ function wireConfig(): void {
     const btn = $("cfgclear") as HTMLElement;
     btn.classList.toggle("active");
   });
+  // boolean knobs: role=switch buttons flip their own aria-checked
+  for (const id of ["cfgopen", "cfgpublic", "cfgreg"]) {
+    $(id).addEventListener("click", () => {
+      const sw = $(id) as HTMLElement;
+      sw.setAttribute("aria-checked", sw.getAttribute("aria-checked") === "true" ? "false" : "true");
+    });
+  }
 }
 
 async function saveName(): Promise<void> {

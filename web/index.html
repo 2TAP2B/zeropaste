@@ -19,9 +19,9 @@
 <link rel="icon" href="/assets/icon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.10.9" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.10.9" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.10.9">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.10.12" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.10.12" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.10.12">
 </head>
 <body>
 <main>
@@ -296,24 +296,28 @@
             <div class="cfgsection">
             <b>access</b>
             <div class="cfgrow">
-              <label for="cfgcreate" class="cfglabel">gate key</label>
+              <label for="cfgcreate" class="cfglabel">gate key <code>CREATE_KEY</code></label>
               <input type="password" id="cfgcreate" placeholder="unchanged" autocomplete="off">
+              <span class="cfgunit"></span>
               <span class="cfgsrc" id="cfgsrc-create"></span>
               <button type="button" id="cfgclear" class="cfgclear" title="clear the create-gate passphrase">✕</button>
             </div>
             <div class="cfgrow">
-              <label for="cfgopen" class="cfglabel">sign-ins <code>REG_OPEN</code></label>
-              <select id="cfgopen"><option value="true">open</option><option value="false">closed</option></select>
+              <label for="cfgopen" class="cfglabel">sign-ins open <code>REG_OPEN</code></label>
+              <button type="button" id="cfgopen" class="switch" role="switch" aria-checked="true" aria-label="sign-ins open"></button>
+              <span class="cfgunit"></span>
               <span class="cfgsrc" id="cfgsrc-open"></span>
             </div>
             <div class="cfgrow">
               <label for="cfgpublic" class="cfglabel">public pastes <code>PUBLIC_PASTES</code></label>
-              <select id="cfgpublic"><option value="true">on</option><option value="false">off</option></select>
+              <button type="button" id="cfgpublic" class="switch" role="switch" aria-checked="true" aria-label="public pastes"></button>
+              <span class="cfgunit"></span>
               <span class="cfgsrc" id="cfgsrc-public"></span>
             </div>
             <div class="cfgrow">
               <label for="cfgreg" class="cfglabel">signup closes after first account <code>USER_REGISTRATION</code></label>
-              <select id="cfgreg"><option value="false">always open</option><option value="true">first-user only</option></select>
+              <button type="button" id="cfgreg" class="switch" role="switch" aria-checked="false" aria-label="signup closes after first account"></button>
+              <span class="cfgunit"></span>
               <span class="cfgsrc" id="cfgsrc-reg"></span>
             </div>
           </div>
@@ -328,7 +332,7 @@
             <div class="cfgrow">
               <label for="cfgshares" class="cfglabel">max shares per account <code>MAX_SHARES_PER_ACCOUNT</code></label>
               <input type="number" id="cfgshares" min="0" max="100000" step="1" inputmode="numeric">
-              <span class="cfgunit" id="cfgunit-shares"></span>
+              <span class="cfgunit" id="cfgunit-shares">shares</span>
               <span class="cfgsrc" id="cfgsrc-shares"></span>
             </div>
             <div class="cfgrow">
@@ -343,7 +347,6 @@
               <span class="cfgunit">bytes</span>
               <span class="cfgsrc" id="cfgsrc-chunk"></span>
             </div>
-          </div>
           </div>
           <div class="accrow cfgactions">
             <button type="button" id="cfgsave">Save</button>
@@ -410,6 +413,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.10.9"></script>
+<script src="/assets/app.js?v=0.10.12"></script>
 </body>
 </html>
