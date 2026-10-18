@@ -1614,3 +1614,270 @@ func TestNameEdit(t *testing.T) {
 		}
 	}
 }
+
+// ---- admin config tab: session-gated view/patch/apply over data/config.json ----
+
+func adminDo(h http.Handler, method, path, body, cookie string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+type cfgKnob struct {
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Source string `json:"source"`
+	Set    bool   `json:"set"`
+	Value  any    `json:"value"`
+}
+type adminView struct {
+	Knobs         []cfgKnob `json:"knobs"`
+	RestartNeeded bool      `json:"restartNeeded"`
+}
+
+func knobOf(t *testing.T, body []byte, name string) cfgKnob {
+	t.Helper()
+	var v adminView
+	if json.Unmarshal(body, &v) != nil {
+		t.Fatalf("unparseable admin view: %s", body)
+	}
+	for _, k := range v.Knobs {
+		if k.Name == name {
+			return k
+		}
+	}
+	t.Fatalf("knob %q missing from view: %s", name, body)
+	return cfgKnob{}
+}
+
+func TestAdminConfigGate(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	// abuse case: anonymous visitors must draw blank on all three verbs
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", "/api/admin/config", ""},
+		{"PUT", "/api/admin/config", `{"maxTtlDays":10}`},
+		{"POST", "/api/admin/apply", ""},
+	} {
+		if rec := adminDo(h, c.method, c.path, c.body, ""); rec.Code != 403 {
+			t.Fatalf("anon %s %s: got %d, want 403", c.method, c.path, rec.Code)
+		}
+	}
+
+	if rec := adminDo(h, "GET", "/api/admin/config", "", cookie); rec.Code != 200 {
+		t.Fatalf("signed GET: got %d %s", rec.Code, rec.Body)
+	} else {
+		var v adminView
+		if json.Unmarshal(rec.Body.Bytes(), &v) != nil {
+			t.Fatalf("unparseable view: %s", rec.Body)
+		}
+		if len(v.Knobs) != 8 {
+			t.Fatalf("want the full knob set, got %d: %s", len(v.Knobs), rec.Body)
+		}
+		if k := knobOf(t, rec.Body.Bytes(), "CREATE_KEY"); k.Kind != "secret" || k.Set || k.Value != nil {
+			t.Fatalf("CREATE_KEY must be an unset secret, got %+v", k)
+		}
+		if k := knobOf(t, rec.Body.Bytes(), "MAX_TTL_DAYS"); k.Value != float64(30) || k.Source != "default" {
+			t.Fatalf("MAX_TTL_DAYS default echo wrong: %+v", k)
+		}
+		if v.RestartNeeded {
+			t.Fatal("fresh boot must not claim a pending restart")
+		}
+	}
+}
+
+func TestAdminConfigPrecedence(t *testing.T) {
+	// env layer (compose): reg closed through env
+	t.Setenv("REG_OPEN", "false")
+	dir := t.TempDir()
+
+	// file layer overrides env for the knob it names and leaves the rest
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"regOpen":true,"maxTtlDays":20}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := build(dir, "")
+	if rec := get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"maxTtlDays":20`) {
+		t.Fatalf("file must beat env for the ceiling: %s", rec.Body)
+	}
+	s := testSession(t, dir) // identity belongs to the SAME dir; loaded AFTER build above
+	cookie := sessionCookieFor(s)
+	rec := adminDo(h, "GET", "/api/admin/config", "", cookie)
+	if k := knobOf(t, rec.Body.Bytes(), "REG_OPEN"); k.Source != "file" || k.Value != true {
+		t.Fatalf("regOpen file layer lost: %+v", k)
+	}
+	if k := knobOf(t, rec.Body.Bytes(), "PUBLIC_PASTES"); k.Source != "default" || k.Value != true {
+		t.Fatalf("unnamed knob must fall through to env/default: %+v", k)
+	}
+	// first-user bootstrap UNCHANGED by the file (env default: no close)
+	var me struct {
+		Open bool `json:"open"`
+	}
+	json.Unmarshal(adminDo(h, "GET", "/api/me", "", cookie).Body.Bytes(), &me)
+	if !me.Open {
+		t.Fatal("regOpen file layer says open - /api/me open must stay true")
+	}
+
+	// bootstrap close via file: userRegistration=false means "closes after the first account"
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"regOpen":false,"userRegistration":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h = build(dir, "")
+	json.Unmarshal(adminDo(h, "GET", "/api/me", "", cookie).Body.Bytes(), &me)
+	if me.Open {
+		t.Fatal("regOpen file false must close fresh registration for /api/me")
+	}
+
+	// env-only fallback: no file -> the boot layer resurfaces (REG_OPEN env
+	// read lives at the guard; int ceiling returns to the init()-default 30)
+	if err := os.Remove(filepath.Join(dir, "config.json")); err != nil {
+		t.Fatal(err)
+	}
+	h = build(dir, "")
+	if rec := get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"maxTtlDays":30`) {
+		t.Fatalf("boot ceiling must resurface without the file: %s", rec.Body)
+	}
+	json.Unmarshal(adminDo(h, "GET", "/api/me", "", cookie).Body.Bytes(), &me)
+	if me.Open {
+		t.Fatal("env REG_OPEN=false must resurface without the file")
+	}
+}
+
+func TestAdminConfigValidation(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+	bad := []string{
+		`{"maxTtlDays":0}`,      // below floor
+		`{"maxTtlDays":400}`,    // above ceiling
+		`{"maxShares":-1}`,      // negative
+		`{"maxUpload":100}`,     // below 1 MiB
+		`{"chunk":1024}`,        // below 64 KiB
+		`{"chunk":67108865}`,    // above 64 MiB
+		`{"chunk":68719476736}`, // chunk above maxUpload headroom
+		`{"regOpen":"yes"}`,     // wrong type
+		`{"accountsOff":true}`,  // unknown field: USER_ACCOUNTS is env-only on purpose
+		`not-json`,              // undecodable
+	}
+	for _, b := range bad {
+		if rec := adminDo(h, "PUT", "/api/admin/config", b, cookie); rec.Code != 400 {
+			t.Fatalf("bad patch %s: got %d, want 400", b, rec.Code)
+		}
+	}
+	// the file must be untouched by the whole failed batch
+	if _, err := os.Stat(filepath.Join(dir, "config.json")); !os.IsNotExist(err) {
+		t.Fatal("failed puts must not have written a config file")
+	}
+}
+
+func TestAdminConfigPersistence(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	rec := adminDo(h, "PUT", "/api/admin/config", `{"maxTtlDays":200,"createKey":"gate-pass"}`, cookie)
+	if rec.Code != 200 {
+		t.Fatalf("PUT: got %d %s", rec.Code, rec.Body)
+	}
+	if k := knobOf(t, rec.Body.Bytes(), "MAX_TTL_DAYS"); k.Source != "file" || k.Value != float64(200) {
+		t.Fatalf("view after PUT: %+v", k)
+	}
+	if k := knobOf(t, rec.Body.Bytes(), "CREATE_KEY"); !k.Set || k.Value != nil {
+		t.Fatalf("CREATE_KEY masked in view: %+v", k)
+	}
+	if !strings.Contains(rec.Body.String(), `"restartNeeded":true`) {
+		t.Fatalf("PUT after boot must flag restart: %s", rec.Body)
+	}
+	// frozen contract: the RUNNING process must not adopt the file values -
+	// a mid-boot ceiling change would strand in-flight chunked uploads
+	if rec := get(h, "/api/gate"); strings.Contains(rec.Body.String(), `"maxTtlDays":200`) {
+		t.Fatalf("running knobs must stay frozen until the apply-restart: %s", rec.Body)
+	}
+	// storage: 0600, masked secret readable, but never echoed
+	fi, err := os.Stat(filepath.Join(dir, "config.json"))
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("config file mode: %v %v", err, fi)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.json"))
+	if !strings.Contains(string(raw), `"createKey":"gate-pass"`) {
+		t.Fatalf("gate key not persisted: %s", raw)
+	}
+
+	// the boot applies the file: a pristine process shows the saved state live
+	h2 := build(dir, "")
+	rec2 := adminDo(h2, "GET", "/api/admin/config", "", cookie)
+	if k := knobOf(t, rec2.Body.Bytes(), "MAX_TTL_DAYS"); k.Source != "file" || k.Value != float64(200) {
+		t.Fatalf("fresh boot lost the file layer: %+v", k)
+	}
+	if strings.Contains(rec2.Body.String(), `"restartNeeded":true`) {
+		t.Fatal("a boot that loaded the file must not claim a pending restart", rec2.Body)
+	}
+	if rec := get(h2, "/api/gate"); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"maxTtlDays":200`) {
+		t.Fatalf("gate echo after boot: got %d %s", rec.Code, rec.Body)
+	}
+
+	// the create-gate must follow the file key: anon 401, bearer 200
+	body := fmt.Sprintf(`{"data":%q,"ttl":"1d"}`, fakePayload())
+	if rec := adminDo(h2, "POST", "/api/paste", body, ""); rec.Code != 401 {
+		t.Fatalf("create without gate key: got %d, want 401", rec.Code)
+	}
+	req := httptest.NewRequest("POST", "/api/paste", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer gate-pass")
+	recOk := httptest.NewRecorder()
+	h2.ServeHTTP(recOk, req)
+	if recOk.Code != 200 {
+		t.Fatalf("create with file gate key: got %d %s", recOk.Code, recOk.Body)
+	}
+}
+
+func TestAdminConfigRestartFlow(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	calls := 0
+	restartServer = func() { calls++ }
+	defer func() { restartServer = nil }()
+
+	if rec := adminDo(h, "POST", "/api/admin/apply", "", cookie); rec.Code != 200 {
+		t.Fatalf("apply: got %d %s", rec.Code, rec.Body)
+	}
+	// second apply while the first drain is pending must 409
+	if rec := adminDo(h, "POST", "/api/admin/apply", "", cookie); rec.Code != 409 {
+		t.Fatalf("double apply: got %d, want 409", rec.Code)
+	}
+	if calls != 0 {
+		t.Fatal("restart hook fired before its 300ms grace window")
+	}
+	time.Sleep(600 * time.Millisecond)
+	if calls != 1 {
+		t.Fatalf("restart hook fired %d times, want exactly 1", calls)
+	}
+}
+
+// the janitor must not eat the admin config: a bare {"maxTtlDays":14} parses
+// as an all-zero paste (expires 0 < now) and would otherwise vanish on the
+// very first sweep
+func TestSweepKeepsConfig(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(p, []byte(`{"maxTtlDays":14}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sweep(dir)
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		t.Fatal("sweep deleted data/config.json")
+	}
+}

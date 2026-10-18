@@ -19,9 +19,9 @@
 <link rel="icon" href="/assets/icon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.10.6" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.10.6" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.10.6">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.10.7" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.10.7" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.10.7">
 </head>
 <body>
 <main>
@@ -232,6 +232,7 @@
         <button type="button" class="dashtab active" data-tab="shares">shares</button>
         <button type="button" class="dashtab" data-tab="reverse">reverse</button>
         <button type="button" class="dashtab" data-tab="account">account</button>
+        <button type="button" class="dashtab" data-tab="config">config</button>
         <a href="/" class="dashtab dashtab-new">new paste</a>
       </div>
     </div>
@@ -279,6 +280,59 @@
             <div id="passkeylist"></div>
             <button type="button" id="dashreg">Add passkey</button>
           </div>
+        </div>
+      </div>
+      <div id="pane-config" class="dashpane hidden">
+        <div class="dashedit" id="confedit">
+          <b>instance configuration</b>
+          <div class="hint">Saved to <code>data/config.json</code> on the server and loaded on the next boot - the file wins over compose env, so new values become live after <b>Save + reboot</b>. Floating knobs cannot come back while the server runs; the file stays authoritative until you edit compose and delete it.</div>
+          <div class="cfgrow">
+            <label for="cfgcreate" class="cfglabel">gate key</label>
+            <input type="password" id="cfgcreate" placeholder="unchanged" autocomplete="off">
+            <span class="cfgsrc" id="cfgsrc-create"></span>
+            <button type="button" id="cfgclear" class="cfgclear" title="clear the create-gate passphrase">✕</button>
+          </div>
+          <div class="cfgrow">
+            <label for="cfgopen" class="cfglabel">sign-ins closed (REG_OPEN)</label>
+            <select id="cfgopen"><option value="false">open</option><option value="true">closed</option></select>
+            <span class="cfgsrc" id="cfgsrc-open"></span>
+          </div>
+          <div class="cfgrow">
+            <label for="cfgpublic" class="cfglabel">public pastes (PUBLIC_PASTES)</label>
+            <select id="cfgpublic"><option value="true">on</option><option value="false">off</option></select>
+            <span class="cfgsrc" id="cfgsrc-public"></span>
+          </div>
+          <div class="cfgrow">
+            <label for="cfgreg" class="cfglabel">first account closes signup</label>
+            <select id="cfgreg"><option value="false">always open</option><option value="true">first-user only</option></select>
+            <span class="cfgsrc" id="cfgsrc-reg"></span>
+          </div>
+          <div class="cfgrow">
+            <label for="cfgttl" class="cfglabel">max ttl (days)</label>
+            <input type="number" id="cfgttl" min="1" max="366" step="1">
+            <span class="cfgsrc" id="cfgsrc-ttl"></span>
+          </div>
+          <div class="cfgrow">
+            <label for="cfgshares" class="cfglabel">max shares per account</label>
+            <input type="number" id="cfgshares" min="0" max="100000" step="1">
+            <span class="cfgsrc" id="cfgsrc-shares"></span>
+          </div>
+          <div class="cfgrow">
+            <label for="cfgupload" class="cfglabel">max upload (bytes)</label>
+            <input type="number" id="cfgupload" min="1048576" max="68719476736" step="1048576">
+            <span class="cfgsrc" id="cfgsrc-upload"></span>
+          </div>
+          <div class="cfgrow">
+            <label for="cfgchunk" class="cfglabel">chunk size (bytes)</label>
+            <input type="number" id="cfgchunk" min="65536" max="67108864" step="65536">
+            <span class="cfgsrc" id="cfgsrc-chunk"></span>
+          </div>
+          <div class="accrow">
+            <button type="button" id="cfgsave">Save</button>
+            <button type="button" id="cfgapply">Save + reboot</button>
+          </div>
+          <div id="cfgerr" class="hint danger hidden"></div>
+          <div id="cfgnote" class="hint hidden"></div>
         </div>
       </div>
     </div>
@@ -336,6 +390,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.10.6"></script>
+<script src="/assets/app.js?v=0.10.7"></script>
 </body>
 </html>

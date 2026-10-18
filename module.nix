@@ -64,7 +64,9 @@ in
         EnvironmentFile = mkIf (cfg.createKeyFile != null) [ cfg.createKeyFile ];
         StateDirectory = "zeropaste"; # /var/lib/zeropaste, emitted per DynamicUser
         DynamicUser = true;
-        Restart = "on-failure";
+        # admin-driven reboot (dash config tab) exits with code 0; on-failure
+        # would leave the service stopped, so always restart
+        Restart = "always";
         RestartSec = 5;
 
         # hardening: the server is two flags and a static dir - sandbox it tight

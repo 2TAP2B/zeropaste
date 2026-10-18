@@ -25,8 +25,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings" // runtime/debug: VCS fallback for the footer version
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -184,12 +185,12 @@ func (s *sessions) rshareCreate(dir string) http.HandlerFunc {
 			return
 		}
 		ttl, ok := parseTTL(q.TTL)
-		if !ok || ttl < time.Minute || ttl > time.Duration(maxTTL)*24*time.Hour {
-			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", maxTTL))
+		if !ok || ttl < time.Minute || ttl > time.Duration(cfgMaxTTL())*24*time.Hour {
+			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", cfgMaxTTL()))
 			return
 		}
-		if q.MaxSize < 1 || q.MaxSize > maxBlobBytes {
-			httpError(w, 400, fmt.Sprintf("max file size out of range (1 to %d bytes)", maxBlobBytes))
+		if q.MaxSize < 1 || q.MaxSize > cfgMaxUpload() {
+			httpError(w, 400, fmt.Sprintf("max file size out of range (1 to %d bytes)", cfgMaxUpload()))
 			return
 		}
 		att := inboxesAttachment(dir)
@@ -202,7 +203,7 @@ func (s *sessions) rshareCreate(dir string) http.HandlerFunc {
 			httpError(w, 409, "that slug is already taken")
 			return
 		}
-		if maxShares > 0 && s.inboxesOwned(dir, i.ID) >= int(maxShares) {
+		if cfgMaxShares() > 0 && s.inboxesOwned(dir, i.ID) >= int(cfgMaxShares()) {
 			httpError(w, 403, "share limit reached for this account")
 			return
 		}
@@ -462,15 +463,123 @@ func init() {
 	maxShares = envInt("MAX_SHARES_PER_ACCOUNT", 0, 0, 100000)
 }
 
+// ---- admin config: data/config.json (0600), managed from the dash ----
+// Every compose/env knob except USER_ACCOUNTS and SESSION_SECRET lives here.
+// Precedence per knob: file > process env > built-in default, resolved ONCE
+// at boot (loadConfig runs before main() derives the env-layered globals) -
+// the admin PUT only persists and re-serves the view; effective values stay
+// frozen until the apply-restart reloads the file, so in-flight chunked
+// uploads and gate closures never see a mid-session knob change. USER_ACCOUNTS
+// stays env-only on purpose: it decides whether an admin surface can even
+// authenticate (route registration at build()) and must not hide its own
+// door; SESSION_SECRET stays in the key file, secrets do not belong in a
+// UI-editable document. `restartNeeded` in the view is the knob-by-knob diff
+// between the file and the running values.
+type adminCfg struct {
+	CreateKey        *string `json:"createKey,omitempty"` // paste-gate passphrase; "" clears it
+	RegOpen          *bool   `json:"regOpen,omitempty"`
+	PublicPastes     *bool   `json:"publicPastes,omitempty"`
+	UserRegistration *bool   `json:"userRegistration,omitempty"` // true = first-user bootstrap stays on
+	MaxTtlDays       *int64  `json:"maxTtlDays,omitempty"`
+	MaxShares        *int64  `json:"maxShares,omitempty"`
+	MaxUpload        *int64  `json:"maxUpload,omitempty"` // bytes
+	Chunk            *int64  `json:"chunk,omitempty"`     // bytes, must stay <= effective MAX_UPLOAD
+}
+
+var (
+	cfgPath    string                   // <dataDir>/config.json, set by loadConfig
+	cfgHold    atomic.Pointer[adminCfg] // boot layer: what THIS process enforces (frozen until restart)
+	cfgPending atomic.Pointer[adminCfg] // file layer: what the next boot will enforce
+)
+
+func loadConfig(dir string) {
+	cfgPath = filepath.Join(dir, "config.json")
+	p := &adminCfg{}
+	if b, err := os.ReadFile(cfgPath); err == nil {
+		if json.Unmarshal(b, p) != nil {
+			log.Fatalf("%s: corrupt admin config", cfgPath)
+		}
+	} else if !os.IsNotExist(err) {
+		log.Fatalf("admin config: %s", err)
+	}
+	// cross-field sanity for the file layer alone; main() re-checks the
+	// effective pair after layering env on top
+	if p.Chunk != nil && p.MaxUpload != nil && *p.Chunk > *p.MaxUpload {
+		log.Fatalf("%s: chunk above maxUpload", cfgPath)
+	}
+	cfgHold.Store(p)    // this boot enforces the file as loaded; frozen afterwards
+	cfgPending.Store(p) // view layer: tracks later adminPut writes
+}
+
+// cfg*: effective value = file pointer ?? boot layer (env-derived global,
+// captured in init()/main()). The env layer is boot-frozen by design: under
+// compose the process env never changes mid-life, and a live edit belongs to
+// the file that wins on the next boot. adminPut updates cfgPending and the
+// file only - cfgHold stays put until the apply-restart re-runs loadConfig.
+func cfgCreateKey(boot string) string {
+	if f := cfgHold.Load().CreateKey; f != nil {
+		return *f
+	}
+	return boot
+}
+func cfgMaxTTL() int64 {
+	if f := cfgHold.Load().MaxTtlDays; f != nil {
+		return *f
+	}
+	return maxTTL
+}
+func cfgMaxShares() int64 {
+	if f := cfgHold.Load().MaxShares; f != nil {
+		return *f
+	}
+	return maxShares
+}
+func cfgMaxUpload() int64 {
+	if f := cfgHold.Load().MaxUpload; f != nil {
+		return *f
+	}
+	return maxBlobBytes
+}
+func cfgChunk() int64 {
+	if f := cfgHold.Load().Chunk; f != nil {
+		return *f
+	}
+	return chunkBytes
+}
+
+// source of truth for the UI chip: file beats env beats default
+var cfgJSONKey = map[string]string{ // env knob name -> config.json field
+	"CREATE_KEY": "createKey", "REG_OPEN": "regOpen", "PUBLIC_PASTES": "publicPastes",
+	"USER_REGISTRATION": "userRegistration", "MAX_TTL_DAYS": "maxTtlDays",
+	"MAX_SHARES_PER_ACCOUNT": "maxShares", "MAX_UPLOAD": "maxUpload", "CHUNK": "chunk",
+}
+
+func cfgSource(name string) string {
+	if data, err := os.ReadFile(cfgPath); err == nil {
+		var probe map[string]json.RawMessage
+		if json.Unmarshal(data, &probe) == nil {
+			if _, ok := probe[cfgJSONKey[name]]; ok {
+				return "file"
+			}
+		}
+	}
+	if os.Getenv(name) != "" {
+		return "env"
+	}
+	return "default"
+}
+
 func main() {
 	footVer = resolveFootVer() // one shot, before the server accepts anything
 	dataDir := flag.String("data", "data", "directory for stored ciphertexts")
 	addr := flag.String("addr", "127.0.0.1:8080", "listen address")
 	flag.Parse()
 
+	loadConfig(*dataDir) // file layer wins over env on the next boot; frozen til then
+
 	maxBlobBytes = envBytes("MAX_UPLOAD", 100<<20, 1<<20, 64<<30) // total ciphertext per share
 	chunkBytes = envBytes("CHUNK", chunkBytes, 64<<10, 64<<20)
-	if maxBlobBytes < chunkBytes {
+	if cfgMaxUpload() < cfgChunk() { // boot-effective pair, file layer included
 		log.Fatal("MAX_UPLOAD below CHUNK")
 	}
 
@@ -486,7 +595,7 @@ func main() {
 		log.Print("zeropaste: create-gate enabled")
 	}
 
-	log.Printf("zeropaste: listening on http://%s (data dir %s, blob cap %d, chunk %d)", *addr, *dataDir, maxBlobBytes, chunkBytes)
+	log.Printf("zeropaste: listening on http://%s (data dir %s, blob cap %d, chunk %d)", *addr, *dataDir, cfgMaxUpload(), cfgChunk())
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           build(*dataDir, createKey),
@@ -498,6 +607,18 @@ func main() {
 	// graceful drain: finish in-flight creates on SIGTERM/SIGINT (docker stop)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// admin apply: same drain shape as SIGTERM, then a clean exit so the
+	// deployment's restart policy (compose unless-stopped, systemd always)
+	// brings back an instance with the freshly written config file
+	restartServer = func() {
+		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer scancel()
+		if err := srv.Shutdown(sctx); err != nil {
+			log.Print(err)
+		}
+		log.Print("zeropaste: admin-requested restart, exiting")
+		os.Exit(0)
+	}
 	go func() { _ = srv.ListenAndServe() }()
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -512,6 +633,7 @@ func build(dir, createKey string) http.Handler {
 	if footVer == "" {
 		footVer = resolveFootVer() // test path; production main() resolves before listen
 	}
+	loadConfig(dir)      // admin file layer; production main() already loaded it - reload is idempotent and re-binds bootSnap to this dir
 	rl := newLimiter(30) // pastes per IP per minute
 	sess := newSessions(dir)
 	owns := newShareIndex(dir, sess)
@@ -549,6 +671,11 @@ func build(dir, createKey string) http.Handler {
 		mux.Handle("POST /api/rshare", secure(rl.guard(hf(sess.rshareCreate(dir)))))
 		mux.Handle("GET /api/rshares", secure(hf(rshareList(dir, sess))))
 		mux.Handle("DELETE /api/rshare/{slug}", secure(hf(rshareDelete(dir, sess))))
+		// admin tab: session-gated handlers check the identity again; apply
+		// drains the process so the deployment's restart policy reloads config
+		mux.Handle("GET /api/admin/config", secure(rl.guard(adminGet(createKey, sess))))
+		mux.Handle("PUT /api/admin/config", secure(rl.guard(adminPut(createKey, sess))))
+		mux.Handle("POST /api/admin/apply", secure(rl.guard(adminApply(sess))))
 	}
 	mux.Handle("GET /api/rshare/{slug}", secure(hf(rshareMeta(dir))))                  // public: sender page header
 	mux.Handle("POST /api/rshare/{slug}/in", secure(rl.guard(hf(sess.rshareIn(dir))))) // public: sender registers upload
@@ -566,7 +693,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 // the key or a hint of it.
 func gateStatus(key string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		respond(w, 200, map[string]any{"enabled": key != "", "maxTtlDays": maxTTL, "maxUpload": maxBlobBytes, "public": publicPastesOn()})
+		respond(w, 200, map[string]any{"enabled": cfgCreateKey(key) != "", "maxTtlDays": cfgMaxTTL(), "maxUpload": cfgMaxUpload(), "public": publicPastesOn()})
 	}
 }
 
@@ -574,7 +701,8 @@ func gateStatus(key string) http.HandlerFunc {
 // success / 401 on failure - lets the client unlock its gate screen up front.
 func gateVerify(key string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if key == "" || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")), []byte(key)) != 1 {
+		eff := cfgCreateKey(key)
+		if eff == "" || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")), []byte(eff)) != 1 {
 			httpError(w, 401, "authorization required")
 			return
 		}
@@ -582,15 +710,205 @@ func gateVerify(key string) http.HandlerFunc {
 	}
 }
 
+// ---- admin endpoints: session-gated (small trusted friend group posture:
+// every signed-in identity administers its instance; ponytail: no separate
+// per-identity admin flag) ----
+
+// restartServer: main() wires the graceful-drain+exit closure; nil in bare
+// handler builds (tests stub their own)
+var restartServer func()
+
+var restarting atomic.Bool // single-flight: drains happen once per save+apply
+
+// bootSnap is gone: "file layer differs from the running layer" is directly
+// cfgPending vs cfgHold; a nil pending means no admin write happened yet in
+// this process, so there is nothing to restart into.
+func sameCfg(a, b *adminCfg) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	ba, _ := json.Marshal(a)
+	bb, _ := json.Marshal(b)
+	return bytes.Equal(ba, bb)
+}
+
+// cfgView is the GET/PUT response shape: DRAFT values per knob - the pending
+// file resolution (identical to the running one until a PUT differs) - plus
+// the source chip (file > env > default; CREATE_KEY exposes a set flag, never
+// the key) and restartNeeded, true exactly when the pending draft differs
+// from what the running process enforces.
+func cfgView(bootKey string) map[string]any {
+	p := cfgPending.Load()
+	if p == nil { // handler path always ran loadConfig first; belt for bare calls
+		p = &adminCfg{}
+	}
+	intVal := func(fp *int64, boot int64) int64 {
+		if fp != nil {
+			return *fp
+		}
+		return boot
+	}
+	boolVal := func(fp *bool, boot bool) bool {
+		if fp != nil {
+			return *fp
+		}
+		return boot
+	}
+	all := []map[string]any{
+		{"name": "CREATE_KEY", "kind": "secret", "source": cfgSource("CREATE_KEY"), "set": func() bool {
+			if p.CreateKey != nil { // file entry, including an explicit "" (cleared)
+				return *p.CreateKey != ""
+			}
+			return bootKey != "" // not in the file: the boot env layer decides
+		}()},
+		{"name": "REG_OPEN", "kind": "bool", "source": cfgSource("REG_OPEN"), "value": boolVal(p.RegOpen, envBool("REG_OPEN", true))},
+		{"name": "PUBLIC_PASTES", "kind": "bool", "source": cfgSource("PUBLIC_PASTES"), "value": boolVal(p.PublicPastes, envBool("PUBLIC_PASTES", true))},
+		{"name": "USER_REGISTRATION", "kind": "bool", "source": cfgSource("USER_REGISTRATION"), "value": !boolVal(p.UserRegistration, regFirstOnly)},
+		{"name": "MAX_TTL_DAYS", "kind": "int", "source": cfgSource("MAX_TTL_DAYS"), "value": intVal(p.MaxTtlDays, maxTTL)},
+		{"name": "MAX_SHARES_PER_ACCOUNT", "kind": "int", "source": cfgSource("MAX_SHARES_PER_ACCOUNT"), "value": intVal(p.MaxShares, maxShares)},
+		{"name": "MAX_UPLOAD", "kind": "int", "source": cfgSource("MAX_UPLOAD"), "value": intVal(p.MaxUpload, maxBlobBytes)},
+		{"name": "CHUNK", "kind": "int", "source": cfgSource("CHUNK"), "value": intVal(p.Chunk, chunkBytes)},
+	}
+	return map[string]any{
+		"knobs":         all,
+		"restartNeeded": !sameCfg(cfgHold.Load(), p),
+	}
+}
+
+func adminAuth(sess *sessions, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if sess.identFrom(r) == nil {
+			httpError(w, 403, "admin needs an account")
+			return
+		}
+		next(w, r)
+	}
+}
+
+func adminGet(bootKey string, sess *sessions) http.HandlerFunc {
+	return adminAuth(sess, func(w http.ResponseWriter, _ *http.Request) {
+		respond(w, 200, cfgView(bootKey))
+	})
+}
+
+// adminPut: patch semantics - PRESENT fields replace the file entry (createKey
+// "" clears), ABSENT fields are left untouched (a typed-but-blank createKey
+// input never wipes an existing gate key). Validation is all-or-nothing: the
+// file keeps the previous bytes on any failure.
+func adminPut(bootKey string, sess *sessions) http.HandlerFunc {
+	return adminAuth(sess, func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields() // typos and env-only knobs (USER_ACCOUNTS) must not become file entries
+		var patch adminCfg
+		if err := dec.Decode(&patch); err != nil {
+			httpError(w, 400, "bad admin config request")
+			return
+		}
+		next := adminCfg{}
+		if p := cfgPending.Load(); p != nil {
+			next = *p // patch on top of the current file layer
+		}
+		if patch.CreateKey != nil {
+			next.CreateKey = patch.CreateKey
+		}
+		if patch.RegOpen != nil {
+			next.RegOpen = patch.RegOpen
+		}
+		if patch.PublicPastes != nil {
+			next.PublicPastes = patch.PublicPastes
+		}
+		if patch.UserRegistration != nil {
+			next.UserRegistration = patch.UserRegistration
+		}
+		if patch.MaxTtlDays != nil {
+			if *patch.MaxTtlDays < 1 || *patch.MaxTtlDays > 366 {
+				httpError(w, 400, "maxTtlDays out of range (1..366)")
+				return
+			}
+			next.MaxTtlDays = patch.MaxTtlDays
+		}
+		if patch.MaxShares != nil {
+			if *patch.MaxShares < 0 || *patch.MaxShares > 100000 {
+				httpError(w, 400, "maxShares out of range (0..100000)")
+				return
+			}
+			next.MaxShares = patch.MaxShares
+		}
+		effMax, effChunk := cfgMaxUpload(), cfgChunk() // pair the next boot will enforce
+		if patch.MaxUpload != nil {
+			if *patch.MaxUpload < 1<<20 || *patch.MaxUpload > 64<<30 {
+				httpError(w, 400, "maxUpload out of range (1 MiB..64 GiB)")
+				return
+			}
+			effMax = *patch.MaxUpload
+			next.MaxUpload = patch.MaxUpload
+		}
+		if patch.Chunk != nil {
+			if *patch.Chunk < 64<<10 || *patch.Chunk > 64<<20 {
+				httpError(w, 400, "chunk out of range (64 KiB..64 MiB)")
+				return
+			}
+			effChunk = *patch.Chunk
+			next.Chunk = patch.Chunk
+		}
+		if effChunk > effMax { // cross-field: validated against the merged pair
+			httpError(w, 400, "chunk must stay at or below maxUpload")
+			return
+		}
+		b, err := json.Marshal(&next)
+		if err != nil {
+			httpError(w, 500, "could not encode admin config")
+			return
+		}
+		tmp := cfgPath + ".tmp"
+		if err := os.WriteFile(tmp, b, 0o600); err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not store admin config")
+			return
+		}
+		if err := os.Rename(tmp, cfgPath); err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not store admin config")
+			return
+		}
+		cfgPending.Store(&next) // view layer only: the running knobs stay frozen til apply
+		respond(w, 200, cfgView(bootKey))
+	})
+}
+
+// adminApply: persist step happens through adminPut (or was skipped when
+// only restarting); this hands the process a graceful drain + exit so the
+// deployment's restart policy brings back a config-fresh instance.
+func adminApply(sess *sessions) http.HandlerFunc {
+	return adminAuth(sess, func(w http.ResponseWriter, _ *http.Request) {
+		if restartServer == nil {
+			httpError(w, 500, "restart unavailable on this install")
+			return
+		}
+		if !restarting.CompareAndSwap(false, true) {
+			httpError(w, 409, "restart already scheduled")
+			return
+		}
+		respond(w, 200, map[string]bool{"ok": true})
+		go func() {
+			time.Sleep(300 * time.Millisecond) // let the response flush before the drain starts
+			restartServer()
+		}()
+	})
+}
+
 // authGate checks Authorization: Bearer <key> in constant time when a key is
 // configured; otherwise it is a pass-through.
 func authGate(key string, next http.Handler) http.Handler {
-	if key == "" {
-		return next
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		eff := cfgCreateKey(key) // file layer can add or replace the boot key
+		if eff == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(got), []byte(eff)) != 1 {
 			httpError(w, 401, "authorization required")
 			return
 		}
@@ -763,11 +1081,11 @@ func create(dir string, owns *shareIndex) http.HandlerFunc {
 		}
 		ttl, ok := parseTTL(req.TTL)
 		if !ok {
-			httpError(w, 400, fmt.Sprintf("ttl must be a burn time like 10m, 6h or 1d (1 minute to %d days)", maxTTL))
+			httpError(w, 400, fmt.Sprintf("ttl must be a burn time like 10m, 6h or 1d (1 minute to %d days)", cfgMaxTTL()))
 			return
 		}
-		if ttl < time.Minute || ttl > time.Duration(maxTTL)*24*time.Hour {
-			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", maxTTL))
+		if ttl < time.Minute || ttl > time.Duration(cfgMaxTTL())*24*time.Hour {
+			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", cfgMaxTTL()))
 			return
 		}
 		if req.Public && !publicPastesOn() {
@@ -989,8 +1307,8 @@ func sweep(dir string) {
 			os.Remove(filepath.Join(dir, name)) // leftovers from crashed burn reads
 			continue
 		}
-		if !strings.HasSuffix(name, ".json") {
-			continue
+		if !strings.HasSuffix(name, ".json") || name == "config.json" {
+			continue // config.json parses as an expired paste - exclude it or the janitor eats the admin config
 		}
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
@@ -1054,7 +1372,7 @@ func uploadInit(dir string, owns *shareIndex) http.HandlerFunc {
 			return
 		}
 		if _, ok := parseTTL(req.TTL); !ok {
-			httpError(w, 400, fmt.Sprintf("ttl must be a burn time like 10m, 6h or 1d (1 minute to %d days)", maxTTL))
+			httpError(w, 400, fmt.Sprintf("ttl must be a burn time like 10m, 6h or 1d (1 minute to %d days)", cfgMaxTTL()))
 			return
 		}
 		if req.Public {
@@ -1087,7 +1405,7 @@ func uploadInit(dir string, owns *shareIndex) http.HandlerFunc {
 				return
 			}
 		}
-		if req.Len < 1 || req.Len > maxBlobBytes {
+		if req.Len < 1 || req.Len > cfgMaxUpload() {
 			httpError(w, 400, "blob size out of range")
 			return
 		}
@@ -1110,7 +1428,7 @@ func uploadInit(dir string, owns *shareIndex) http.HandlerFunc {
 			httpError(w, 500, "could not store upload")
 			return
 		}
-		respond(w, 200, map[string]any{"id": id, "chunkSize": chunkBytes, "chunks": chunksFor(req.Len, chunkBytes)})
+		respond(w, 200, map[string]any{"id": id, "chunkSize": cfgChunk(), "chunks": chunksFor(req.Len, cfgChunk())})
 	}
 }
 
@@ -1151,13 +1469,13 @@ func uploadChunk(dir string) http.HandlerFunc {
 			return
 		}
 		n, err := strconv.Atoi(r.PathValue("n"))
-		if err != nil || n < 0 || n >= int(chunksFor(u.Len, chunkBytes)) {
+		if err != nil || n < 0 || n >= int(chunksFor(u.Len, cfgChunk())) {
 			httpError(w, 400, "bad chunk index")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, chunkBytes+1)
+		r.Body = http.MaxBytesReader(w, r.Body, cfgChunk()+1)
 		part, err := io.ReadAll(r.Body)
-		if err != nil || int64(len(part)) < 1 || int64(len(part)) > chunkBytes {
+		if err != nil || int64(len(part)) < 1 || int64(len(part)) > cfgChunk() {
 			httpError(w, 400, "chunk size out of range")
 			return
 		}
@@ -1227,7 +1545,7 @@ func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
 			}
 		}
 		rd := filepath.Join(dir, "uploads", id)
-		chunks := chunksFor(u.Len, chunkBytes)
+		chunks := chunksFor(u.Len, cfgChunk())
 		blobPath := filepath.Join(dir, finalID+".blob")
 		blobFlags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
 		if u.Slug != "" {
@@ -1253,9 +1571,9 @@ func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
 				ok = false
 				break
 			}
-			want := chunkBytes
+			want := cfgChunk()
 			if n == chunks-1 {
-				want = u.Len - (chunks-1)*chunkBytes
+				want = u.Len - (chunks-1)*cfgChunk()
 			}
 			if st.Size() != want {
 				ok = false
@@ -1285,11 +1603,11 @@ func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
 			return
 		}
 		ttl, _ := parseTTL(u.TTL)
-		if ttl < time.Minute || ttl > time.Duration(maxTTL)*24*time.Hour {
+		if ttl < time.Minute || ttl > time.Duration(cfgMaxTTL())*24*time.Hour {
 			// the init only shape-checks ttl; the ceiling applies at finish too
 			// or a crafted manifest could set year-long expiry
 			os.Remove(blobPath)
-			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", maxTTL))
+			httpError(w, 400, fmt.Sprintf("ttl must be between 1 minute and %d days", cfgMaxTTL()))
 			return
 		}
 		if !owns.mayCreate(r) {
@@ -1379,8 +1697,8 @@ func readBlob(dir string) http.HandlerFunc {
 			return
 		}
 		length := p.Len - offset
-		if length > chunkBytes {
-			length = chunkBytes
+		if length > cfgChunk() {
+			length = cfgChunk()
 		}
 		f, err := os.Open(filepath.Join(dir, id+".blob"))
 		if err != nil {
@@ -1987,7 +2305,7 @@ func (si *shareIndex) idents(suite string) string {
 // mayCreate guards MAX_SHARES_PER_ACCOUNT (0 = unlimited): true when the
 // request is anonymous or the identity is under the active-row cap.
 func (si *shareIndex) mayCreate(r *http.Request) bool {
-	if maxShares <= 0 {
+	if cfgMaxShares() <= 0 {
 		return true
 	}
 	i := si.sess.identFrom(r)
@@ -2011,7 +2329,7 @@ func (si *shareIndex) mayCreate(r *http.Request) bool {
 		}
 		active++
 	}
-	return active < int(maxShares)
+	return active < int(cfgMaxShares())
 }
 
 // attach after a fresh registration makes previously created anon impossible;
@@ -2080,14 +2398,24 @@ func (si *shareIndex) list() http.HandlerFunc {
 // restart-free and testable; USER_ACCOUNTS=false kills the feature entirely
 // (public requires a signed-in identity by definition).
 func publicPastesOn() bool {
-	return accountsOn && envBool("PUBLIC_PASTES", true)
+	if !accountsOn {
+		return false
+	}
+	if f := cfgHold.Load().PublicPastes; f != nil {
+		return *f
+	}
+	return envBool("PUBLIC_PASTES", true)
 }
 
 func registrationOpen(identCount int) bool {
 	if !accountsOn {
 		return false
 	}
-	if v := strings.TrimSpace(os.Getenv("REG_OPEN")); v != "" {
+	if f := cfgHold.Load().RegOpen; f != nil {
+		if !*f {
+			return false
+		}
+	} else if v := strings.TrimSpace(os.Getenv("REG_OPEN")); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
 			log.Fatalf("REG_OPEN: %q invalid, want true/false", v)
@@ -2096,7 +2424,11 @@ func registrationOpen(identCount int) bool {
 			return false
 		}
 	}
-	if regFirstOnly && identCount > 0 {
+	firstOnly := regFirstOnly
+	if f := cfgHold.Load().UserRegistration; f != nil {
+		firstOnly = !*f
+	}
+	if firstOnly && identCount > 0 {
 		return false
 	}
 	return true

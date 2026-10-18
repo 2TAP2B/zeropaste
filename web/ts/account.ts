@@ -348,7 +348,7 @@ function dashTab(which: string): void {
   for (const b of document.querySelectorAll("#dashtabs .dashtab[data-tab]")) {
     b.classList.toggle("active", (b as HTMLElement).dataset.tab === which);
   }
-  for (const pane of ["pane-shares", "pane-reverse", "pane-account"]) {
+  for (const pane of ["pane-shares", "pane-reverse", "pane-account", "pane-config"]) {
     $(pane).classList.toggle("hidden", pane !== "pane-" + which);
   }
   try {
@@ -369,7 +369,7 @@ export async function dashboardPage(): Promise<void> {
   let tab = "shares";
   try {
     const saved = localStorage.getItem("zp.tab");
-    if (saved === "shares" || saved === "reverse" || saved === "account") tab = saved;
+    if (saved === "shares" || saved === "reverse" || saved === "account" || saved === "config") tab = saved;
   } catch {
     /* private mode */
   }
@@ -438,7 +438,151 @@ export async function dashboardPage(): Promise<void> {
     })();
   });
 
+  wireConfig();
   await loadDash();
+}
+
+// ---- admin config tab ----
+
+interface CfgKnob {
+  name: string;
+  kind: string;
+  source: string;
+  set?: boolean;
+  value?: boolean | number;
+}
+
+interface CfgView {
+  knobs: CfgKnob[];
+  restartNeeded: boolean;
+}
+
+function cfgError(msg: string): void {
+  const err = $("cfgerr");
+  err.textContent = msg;
+  err.classList.remove("hidden");
+}
+
+function delay(ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
+}
+
+// error body override: {"error": "..."} is the server's only shape
+async function resErr(res: Response, fallback: string): Promise<string> {
+  const raw: unknown = await res.json().catch(() => null);
+  if (raw && typeof raw === "object" && "error" in raw && typeof raw.error === "string") return raw.error;
+  return fallback;
+}
+
+function cfgNote(msg: string): void {
+  const note = $("cfgnote");
+  note.textContent = msg;
+  note.classList.toggle("hidden", msg === "");
+}
+
+// paint the form from the server view; knobs whose file entry is newer than
+// the running process carry restartNeeded at the top level
+function paintConfig(v: CfgView): void {
+  const by: Record<string, CfgKnob> = Object.fromEntries(v.knobs.map((k) => [k.name, k]));
+  const setSrc = (id: string, name: string): void => {
+    const k = by[name];
+    if (!k) return; // server always sends the full set; missing chip is a no-op
+    const s = $(id) as HTMLElement;
+    s.textContent = k.source + (k.source === "file" && v.restartNeeded ? " (needs reboot)" : "");
+  };
+  setSrc("cfgsrc-create", "CREATE_KEY");
+  setSrc("cfgsrc-open", "REG_OPEN");
+  setSrc("cfgsrc-public", "PUBLIC_PASTES");
+  setSrc("cfgsrc-reg", "USER_REGISTRATION");
+  setSrc("cfgsrc-ttl", "MAX_TTL_DAYS");
+  setSrc("cfgsrc-shares", "MAX_SHARES_PER_ACCOUNT");
+  setSrc("cfgsrc-upload", "MAX_UPLOAD");
+  setSrc("cfgsrc-chunk", "CHUNK");
+  const kv = (name: string): boolean | number | undefined => by[name]?.value;
+  ($("cfgopen") as HTMLSelectElement).value = String(kv("REG_OPEN"));
+  ($("cfgpublic") as HTMLSelectElement).value = String(kv("PUBLIC_PASTES"));
+  ($("cfgreg") as HTMLSelectElement).value = String(kv("USER_REGISTRATION"));
+  ($("cfgttl") as HTMLInputElement).value = String(kv("MAX_TTL_DAYS"));
+  ($("cfgshares") as HTMLInputElement).value = String(kv("MAX_SHARES_PER_ACCOUNT"));
+  ($("cfgupload") as HTMLInputElement).value = String(kv("MAX_UPLOAD"));
+  ($("cfgchunk") as HTMLInputElement).value = String(kv("CHUNK"));
+  cfgNote(v.restartNeeded ? "the file holds values the running process has not loaded yet - Save + reboot applies them" : "");
+}
+
+// body = only fields with a value typed by the user; blank inputs keep the
+// server's stored value, createKey default (typed text -> replace, checkbox -> clear)
+function cfgBody(): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  const create = ($("cfgcreate") as HTMLInputElement).value;
+  if (create || ($("cfgclear") as HTMLInputElement).classList.contains("active")) body.createKey = create;
+  const sel = (id: string): boolean => ($(id) as HTMLSelectElement).value === "true";
+  const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
+  body.regOpen = sel("cfgopen");
+  body.publicPastes = sel("cfgpublic");
+  body.userRegistration = sel("cfgreg");
+  body.maxTtlDays = num("cfgttl");
+  body.maxShares = Math.round(num("cfgshares"));
+  body.maxUpload = Math.round(num("cfgupload"));
+  body.chunk = Math.round(num("cfgchunk"));
+  return body;
+}
+
+function wireConfig(): void {
+  void (async () => {
+    const res = await fetch("/api/admin/config").catch(() => null);
+    if (res?.ok) {
+      paintConfig((await res.json()) as CfgView);
+    } else {
+      // non-admin session or server unreachable: leave the form inert
+      ($("confedit") as HTMLElement).classList.add("hidden");
+      cfgError("configuration is unavailable for this session");
+    }
+  })();
+
+  const save = async (apply: boolean): Promise<void> => {
+    const err = $("cfgerr");
+    err.classList.add("hidden");
+    try {
+      const res = await fetch("/api/admin/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cfgBody()),
+      });
+      if (!res.ok) {
+        throw new Error(await resErr(res, "save failed"));
+      }
+      paintConfig((await res.json()) as CfgView);
+      ($("cfgcreate") as HTMLInputElement).value = "";
+      ($("cfgclear") as HTMLInputElement).classList.remove("active");
+      if (apply) {
+        const applyRes = await fetch("/api/admin/apply", { method: "POST" });
+        if (!applyRes.ok) {
+          throw new Error(await resErr(applyRes, "reboot failed"));
+        }
+        cfgNote("server is rebooting with the saved configuration...");
+        for (let i = 0; i < 20; i++) {
+          await delay(500);
+          const check = await fetch("/api/gate").catch(() => null);
+          if (check?.ok) {
+            location.reload();
+            return;
+          }
+        }
+        throw new Error("server did not come back within 10s - check the instance");
+      }
+    } catch (e) {
+      cfgError(e instanceof Error ? e.message : "save failed");
+    }
+  };
+  $("cfgsave").addEventListener("click", () => void save(false));
+  // Save + reboot: one click always saves BEFORE the drain; 409 (already restarting) keeps the reboot going
+  $("cfgapply").addEventListener("click", () => void save(true));
+  $("cfgclear").addEventListener("click", () => {
+    const btn = $("cfgclear") as HTMLElement;
+    btn.classList.toggle("active");
+  });
 }
 
 async function saveName(): Promise<void> {
