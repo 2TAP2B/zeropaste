@@ -13,6 +13,7 @@ services:
     #   CREATE_KEY: "change-me"       # site passphrase in front of creates
     #   USER_ACCOUNTS: "true"         # "false" disables accounts entirely
     #   USER_REGISTRATION: "true"     # "false": sign-up closes after the first account
+    #   LOCKED: "false"                # "true": anonymous visitors cannot paste; use invites below for friends
     #   MAX_TTL_DAYS: "30"            # share-time ceiling in days (1..366)
     #   MAX_SHARES_PER_ACCOUNT: "0"   # active shares per account; 0 = unlimited
     #   REG_OPEN: "false"             # static registration lock; sign-ins stay open

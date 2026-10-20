@@ -19,9 +19,9 @@
 <link rel="icon" href="/assets/icon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.10.18" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.10.18" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.10.18">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.11.0" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.11.0" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.11.0">
 </head>
 <body>
 <main>
@@ -83,6 +83,18 @@
       <button class="primary" id="gatebtn">Unlock</button>
     </div>
     <div id="gateerr" class="hint danger hidden"></div>
+  </section>
+
+<!-- locked compose: invite-only instances keep anonymous visitors out of the
+     create lane; reads never lock -->
+  <section id="lockcard" class="card hidden">
+    <div class="unlockbox">
+      <svg class="lockring" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" ry="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+      <b>this instance is locked</b>
+      <p>Pasting needs an account with a passkey. Reading stays open: anyone with a share link can still decrypt it in their browser.</p>
+      <button type="button" class="primary" id="locksignin">Sign in with passkey</button>
+      <p class="hint">Arrived with an invite link? It unlocks registration - the site remembers the invite after you open it once.</p>
+    </div>
   </section>
 
   <!-- compose -->
@@ -312,6 +324,10 @@
               <label for="cfgreg" class="cfglabel">signup closes after first account</label>
               <button type="button" id="cfgreg" class="switch" role="switch" aria-checked="false" aria-label="signup closes after first account"></button>
             </div>
+            <div class="cfgrow">
+              <label for="cfglocked" class="cfglabel">locked instance</label>
+              <button type="button" id="cfglocked" class="switch" role="switch" aria-checked="false" aria-label="locked instance"></button>
+            </div>
           </div>
           <div class="cfgsection">
             <b>limits</b>
@@ -331,6 +347,22 @@
               <label for="cfgchunk" class="cfglabel">chunk size (bytes)</label>
               <input type="number" id="cfgchunk" min="65536" max="67108864" step="65536" inputmode="numeric">
             </div>
+          </div>
+          <div class="cfgsection" id="cfginvsec">
+            <b>invites</b>
+            <div class="hint">When registration is closed or the instance is locked, an invite link is the only way a friend creates an account: they open it once, register their passkey, done. A link dies after its last use or when you revoke it.</div>
+            <div class="cfgrow">
+              <label for="invcfg" class="cfglabel">new link uses</label>
+              <input type="number" id="invcfg" min="1" max="100" step="1" value="1" inputmode="numeric">
+              <button type="button" id="invcreate" class="rowcopy">create invite link</button>
+            </div>
+            <div id="inviteout" class="inviteout hidden">
+              <input type="text" id="invitelink" readonly aria-label="invite link">
+              <button type="button" id="invcopy" class="rowcopy" aria-label="Copy invite link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+            </div>
+            <div id="invitelist"></div>
           </div>
           <div class="accrow cfgactions">
             <button type="button" id="cfgsave">Save</button>
@@ -397,6 +429,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.10.18"></script>
+<script src="/assets/app.js?v=0.11.0"></script>
 </body>
 </html>

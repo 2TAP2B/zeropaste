@@ -484,6 +484,7 @@ type adminCfg struct {
 	MaxShares        *int64  `json:"maxShares,omitempty"`
 	MaxUpload        *int64  `json:"maxUpload,omitempty"` // bytes
 	Chunk            *int64  `json:"chunk,omitempty"`     // bytes, must stay <= effective MAX_UPLOAD
+	Locked           *bool   `json:"locked,omitempty"`    // v0.11: invite-only compose - reads stay open
 }
 
 var (
@@ -546,12 +547,102 @@ func cfgChunk() int64 {
 	}
 	return chunkBytes
 }
+func cfgLocked() bool {
+	if f := cfgHold.Load().Locked; f != nil {
+		return *f
+	}
+	return envBool("LOCKED", false)
+}
+
+// ---- invites: data/invites/<token>.json - registration links an admin
+// hands out. A locked instance (env LOCKED / admin knob, v0.11) only lets
+// passkey identities into the compose lane; a fresh identity registers with
+// a valid, un-burned invite token (validated at begin, re-validated and
+// consumed at finish so a revoked or exhausted link cannot complete
+// mid-ceremony). Reads stay open: locking is a compose-lane posture, the
+// share-link contract never depends on having an account.
+type invite struct {
+	Token   string `json:"token"`
+	Created int64  `json:"created"`
+	MaxUses int64  `json:"maxUses"`
+	Uses    int64  `json:"uses"`
+}
+
+func invitesDir(dir string) string { return filepath.Join(dir, "invites") }
+
+func validInviteToken(t string) bool {
+	if len(t) != 22 {
+		return false
+	}
+	for _, c := range t {
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func loadInvite(dir, token string) (*invite, bool) {
+	b, err := os.ReadFile(filepath.Join(invitesDir(dir), token+".json"))
+	if err != nil {
+		return nil, false
+	}
+	var inv invite
+	if json.Unmarshal(b, &inv) != nil || inv.Token != token {
+		return nil, false
+	}
+	return &inv, true
+}
+
+func saveInvite(dir string, inv *invite) error {
+	if err := os.MkdirAll(invitesDir(dir), 0o700); err != nil {
+		return err
+	}
+	b, _ := json.Marshal(inv)
+	return os.WriteFile(filepath.Join(invitesDir(dir), inv.Token+".json"), b, 0o600)
+}
+
+// inviteGate: registration allowed when it is open, or when the presented
+// token is a live invite; used at begin (validate) and finish (re-validate).
+func (s *sessions) inviteGate(token string) (bool, string) {
+	if registrationOpen(s.identCount()) {
+		return true, ""
+	}
+	if token == "" {
+		return false, "passkey registration is closed on this instance"
+	}
+	if !validInviteToken(token) {
+		return false, "this invite link is malformed"
+	}
+	inv, found := loadInvite(s.dir, token)
+	if !found || inv.Uses >= inv.MaxUses {
+		return false, "this invite link is no longer valid"
+	}
+	return true, ""
+}
+
+// inviteConsume: bump uses; the file dies when the last use is burned.
+func (s *sessions) inviteConsume(token string) {
+	inv, found := loadInvite(s.dir, token)
+	if !found {
+		return
+	}
+	inv.Uses++
+	if inv.Uses >= inv.MaxUses {
+		_ = os.Remove(filepath.Join(invitesDir(s.dir), token+".json"))
+		return
+	}
+	_ = saveInvite(s.dir, inv)
+}
 
 // source of truth for the UI chip: file beats env beats default
 var cfgJSONKey = map[string]string{ // env knob name -> config.json field
 	"CREATE_KEY": "createKey", "REG_OPEN": "regOpen", "PUBLIC_PASTES": "publicPastes",
 	"USER_REGISTRATION": "userRegistration", "MAX_TTL_DAYS": "maxTtlDays",
 	"MAX_SHARES_PER_ACCOUNT": "maxShares", "MAX_UPLOAD": "maxUpload", "CHUNK": "chunk",
+	"LOCKED": "locked",
 }
 
 func cfgSource(name string) string {
@@ -676,6 +767,10 @@ func build(dir, createKey string) http.Handler {
 		mux.Handle("GET /api/admin/config", secure(rl.guard(adminGet(createKey, sess))))
 		mux.Handle("PUT /api/admin/config", secure(rl.guard(adminPut(createKey, sess))))
 		mux.Handle("POST /api/admin/apply", secure(rl.guard(adminApply(sess))))
+		// invites (v0.11): admin-minted registration links for locked instances
+		mux.Handle("POST /api/admin/invites", secure(rl.guard(adminInviteCreate(sess))))
+		mux.Handle("GET /api/admin/invites", secure(adminInvitesList(sess)))
+		mux.Handle("DELETE /api/admin/invites/{token}", secure(adminInviteDelete(sess)))
 	}
 	mux.Handle("GET /api/rshare/{slug}", secure(hf(rshareMeta(dir))))                  // public: sender page header
 	mux.Handle("POST /api/rshare/{slug}/in", secure(rl.guard(hf(sess.rshareIn(dir))))) // public: sender registers upload
@@ -693,7 +788,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 // the key or a hint of it.
 func gateStatus(key string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		respond(w, 200, map[string]any{"enabled": cfgCreateKey(key) != "", "maxTtlDays": cfgMaxTTL(), "maxUpload": cfgMaxUpload(), "public": publicPastesOn()})
+		respond(w, 200, map[string]any{"enabled": cfgCreateKey(key) != "", "maxTtlDays": cfgMaxTTL(), "maxUpload": cfgMaxUpload(), "public": publicPastesOn(), "locked": cfgLocked()})
 	}
 }
 
@@ -764,6 +859,7 @@ func cfgView(bootKey string) map[string]any {
 		{"name": "REG_OPEN", "kind": "bool", "source": cfgSource("REG_OPEN"), "value": boolVal(p.RegOpen, envBool("REG_OPEN", true))},
 		{"name": "PUBLIC_PASTES", "kind": "bool", "source": cfgSource("PUBLIC_PASTES"), "value": boolVal(p.PublicPastes, envBool("PUBLIC_PASTES", true))},
 		{"name": "USER_REGISTRATION", "kind": "bool", "source": cfgSource("USER_REGISTRATION"), "value": !boolVal(p.UserRegistration, regFirstOnly)},
+		{"name": "LOCKED", "kind": "bool", "source": cfgSource("LOCKED"), "value": boolVal(p.Locked, envBool("LOCKED", false))},
 		{"name": "MAX_TTL_DAYS", "kind": "int", "source": cfgSource("MAX_TTL_DAYS"), "value": intVal(p.MaxTtlDays, maxTTL)},
 		{"name": "MAX_SHARES_PER_ACCOUNT", "kind": "int", "source": cfgSource("MAX_SHARES_PER_ACCOUNT"), "value": intVal(p.MaxShares, maxShares)},
 		{"name": "MAX_UPLOAD", "kind": "int", "source": cfgSource("MAX_UPLOAD"), "value": intVal(p.MaxUpload, maxBlobBytes)},
@@ -821,6 +917,9 @@ func adminPut(bootKey string, sess *sessions) http.HandlerFunc {
 		if patch.UserRegistration != nil {
 			next.UserRegistration = patch.UserRegistration
 		}
+		if patch.Locked != nil {
+			next.Locked = patch.Locked
+		}
 		if patch.MaxTtlDays != nil {
 			if *patch.MaxTtlDays < 1 || *patch.MaxTtlDays > 366 {
 				httpError(w, 400, "maxTtlDays out of range (1..366)")
@@ -874,6 +973,68 @@ func adminPut(bootKey string, sess *sessions) http.HandlerFunc {
 		}
 		cfgPending.Store(&next) // view layer only: the running knobs stay frozen til apply
 		respond(w, 200, cfgView(bootKey))
+	})
+}
+
+// ---- invites (v0.11): admin-minted registration links ----
+
+// adminInviteCreate: POST {uses?} 1..100 (default 1) -> {token}; the
+// client builds location.origin + /#invite=<token>
+func adminInviteCreate(sess *sessions) http.HandlerFunc {
+	return adminAuth(sess, func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+		var q struct {
+			Uses int64 `json:"uses"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&q) // absent = single use
+		if q.Uses == 0 {
+			q.Uses = 1
+		}
+		if q.Uses < 0 || q.Uses > 100 {
+			httpError(w, 400, "uses out of range (1..100)")
+			return
+		}
+		inv := invite{Token: newSessionID(), Created: time.Now().Unix(), MaxUses: q.Uses}
+		if err := saveInvite(sess.dir, &inv); err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not store invite")
+			return
+		}
+		respond(w, 200, map[string]any{"token": inv.Token, "maxUses": inv.MaxUses})
+	})
+}
+
+func adminInvitesList(sess *sessions) http.HandlerFunc {
+	return adminAuth(sess, func(w http.ResponseWriter, _ *http.Request) {
+		ents, err := os.ReadDir(invitesDir(sess.dir))
+		if err != nil {
+			respond(w, 200, map[string]any{"invites": []any{}})
+			return
+		}
+		rows := make([]map[string]any, 0, len(ents))
+		for _, e := range ents {
+			if !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			inv, ok := loadInvite(sess.dir, strings.TrimSuffix(e.Name(), ".json"))
+			if !ok {
+				continue
+			}
+			rows = append(rows, map[string]any{"token": inv.Token, "uses": inv.Uses, "maxUses": inv.MaxUses, "created": inv.Created})
+		}
+		respond(w, 200, map[string]any{"invites": rows})
+	})
+}
+
+func adminInviteDelete(sess *sessions) http.HandlerFunc {
+	return adminAuth(sess, func(w http.ResponseWriter, r *http.Request) {
+		token := r.PathValue("token")
+		if !validInviteToken(token) {
+			http.NotFound(w, r)
+			return
+		}
+		_ = os.Remove(filepath.Join(invitesDir(sess.dir), token+".json")) // idempotent
+		respond(w, 200, map[string]bool{"ok": true})
 	})
 }
 
@@ -1074,6 +1235,10 @@ func create(dir string, owns *shareIndex) http.HandlerFunc {
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+		if cfgLocked() && owns.sess.identFrom(r) == nil { // v0.11: invite-only compose lane
+			httpError(w, 403, "sign in to paste on this locked instance")
+			return
+		}
 		var req req
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpError(w, 400, "invalid request body")
@@ -1366,6 +1531,10 @@ func uploadInit(dir string, owns *shareIndex) http.HandlerFunc {
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+		if cfgLocked() && owns.sess.identFrom(r) == nil { // v0.11: invite-only compose lane
+			httpError(w, 403, "sign in to paste on this locked instance")
+			return
+		}
 		var req req
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpError(w, 400, "invalid request body")
@@ -1506,6 +1675,10 @@ func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
 		id := r.PathValue("id")
 		if !validID(id) {
 			http.NotFound(w, r)
+			return
+		}
+		if cfgLocked() && owns.sess.identFrom(r) == nil { // v0.11: invite-only compose lane
+			httpError(w, 403, "sign in to paste on this locked instance")
 			return
 		}
 		if _, err := os.Stat(filepath.Join(dir, id+".json")); err == nil {
@@ -1956,14 +2129,29 @@ type ceremony struct {
 	// pending ceremony identity users (registration path); identity files
 	// are written only when finish succeeds.
 	tokens map[string]*identity
+	// invite token accepted at begin (empty = none); finish re-validates it
+	// and consumes a use
+	invites map[string]string
 }
 
 func newCeremony() *ceremony {
 	return &ceremony{
-		reg:    map[string]webauthn.SessionData{},
-		log:    map[string]webauthn.SessionData{},
-		tokens: map[string]*identity{},
+		reg:     map[string]webauthn.SessionData{},
+		log:     map[string]webauthn.SessionData{},
+		tokens:  map[string]*identity{},
+		invites: map[string]string{},
 	}
+}
+
+func (c *ceremony) putInvite(id, token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.invites[id] = token
+}
+func (c *ceremony) inviteOf(id string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.invites[id]
 }
 
 func (c *ceremony) pending(id string) (*identity, bool) {
@@ -2063,17 +2251,17 @@ func readCeremonyBody(w http.ResponseWriter, r *http.Request) ([]byte, string, b
 
 func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 	type req struct {
-		Name string `json:"name"`
+		Name   string `json:"name"`
+		Invite string `json:"invite"` // v0.11: invite token from a #invite= link
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		n := s.identCount()
-		if !registrationOpen(n) && s.identFrom(r) == nil {
-			httpError(w, 403, "passkey registration is closed on this instance")
-			return
-		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 		var q req
 		_ = json.NewDecoder(r.Body).Decode(&q) // name optional; anonymous register allowed
+		if ok, why := s.inviteGate(q.Invite); !ok && s.identFrom(r) == nil {
+			httpError(w, 403, why)
+			return
+		}
 		if isIPHost(r.Host) {
 			httpError(w, 400, "passkeys are not available on an IP address - open the site over its domain")
 			return
@@ -2103,6 +2291,7 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 		}
 		c.putReg(id, *sd)
 		c.setPending(id, &user) // the pending identity rides in memory; not yet on disk
+		c.putInvite(id, q.Invite)
 		respond(w, 200, map[string]any{"options": creation, "sessionId": id, "name": user.Name})
 	}
 }
@@ -2111,13 +2300,13 @@ func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFun
 	return func(w http.ResponseWriter, r *http.Request) {
 		// same gate as begin: a ceremony window (2 min) must not outlive a
 		// registration switch flip mid-enrollment
-		n := s.identCount()
-		if !registrationOpen(n) && s.identFrom(r) == nil {
-			httpError(w, 403, "passkey registration is closed on this instance")
-			return
-		}
 		body, sid, ok := readCeremonyBody(w, r)
 		if !ok {
+			return
+		}
+		token := c.inviteOf(sid)
+		if ok, why := s.inviteGate(token); !ok && s.identFrom(r) == nil {
+			httpError(w, 403, why)
 			return
 		}
 		sd, found := c.getReg(sid)
@@ -2152,6 +2341,9 @@ func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFun
 			log.Print(err)
 			httpError(w, 500, "could not store identity")
 			return
+		}
+		if token != "" {
+			s.inviteConsume(token) // only after the identity is safely on disk
 		}
 		if owns != nil {
 			owns.attach(user.ID)

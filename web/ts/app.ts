@@ -5,7 +5,7 @@ import { initTheme } from "./theme";
 import { readView } from "./read";
 import { uploadBundle, abortUpload, UploadAborted, setClientMaxUpload } from "./uploads";
 import { selfcheck } from "./selfcheck";
-import { bootAccount, stashForCreate, dashboardPage, signedIn } from "./account";
+import { bootAccount, stashForCreate, dashboardPage, signedIn, readInviteFragment } from "./account";
 import { reverseView } from "./reverse";
 
 // pwa: the worker caches the static shell only (same origin, never /api/*),
@@ -301,28 +301,45 @@ function enterCompose(): void {
   ($("text") as HTMLTextAreaElement).focus(); // compose is no longer autofocus: keeps /dash and /p from stealing focus
 }
 
+// locked instances: anonymous visitors see the lock card instead of compose
+// (the server 403s the create lane anyway); a later sign-in re-enters via
+// the zp:me event. Reads never lock.
+let locked = false;
+
+function lockSync(): void {
+  if (!locked || signedIn) return enterCompose();
+  show("lockcard");
+}
+$("locksignin").addEventListener("click", () => {
+  (document.getElementById("accpanel") as HTMLDivElement).showPopover();
+});
+
 // instance-wide TTL ceiling arrives via /api/gate; shown on the compose label
 // while the server remains the authority (400 beyond the ceiling)
 async function gateFlow(): Promise<void> {
   initTheme();
+  readInviteFragment();
+  document.addEventListener("zp:me", lockSync); // sign-in state flips re-sync the card
   try {
     const cfg = (await (await fetch("/api/gate")).json()) as {
       enabled: boolean;
       maxTtlDays?: number;
       maxUpload?: number;
       public?: boolean;
+      locked?: boolean;
     };
     publicEnabled = cfg.public === true;
     syncPublicAccess(); // visibility = capability + session (refreshMe may have resolved first)
+    locked = cfg.locked === true;
     if (cfg.maxUpload) setClientMaxUpload(cfg.maxUpload);
-    if (!cfg.enabled) return enterCompose();
+    if (!cfg.enabled) return lockSync();
     const stored = siteKey.get();
     const unlock = async (key: string): Promise<void> => {
       const res = await fetch("/api/gate", { method: "POST", headers: { Authorization: "Bearer " + key } });
       if (res.status === 204) {
         siteKey.set(key);
         ($("create") as HTMLButtonElement).disabled = false;
-        enterCompose();
+        lockSync();
         return;
       }
       siteKey.clear();
@@ -339,7 +356,7 @@ async function gateFlow(): Promise<void> {
     });
     if (stored) {
       const res = await fetch("/api/gate", { method: "POST", headers: { Authorization: "Bearer " + stored } });
-      if (res.status === 204) return enterCompose();
+      if (res.status === 204) return lockSync();
       const err = $("gateerr");
       err.textContent = "Wrong passphrase.";
       err.classList.remove("hidden");
@@ -397,6 +414,8 @@ if (location.search.includes("selfcheck")) {
   void gateFlow();
   void bootAccount().then(syncPublicAccess); // slider waits for the session probe
 }
+// invite links may land on /dash as well (registration runs from the account pane)
+if (location.pathname === "/dash") readInviteFragment();
 
 // footer quickstart: highlight the copy blocks with the embededded highlight.js
 // (static strings; the theme sheets already carry the colors)

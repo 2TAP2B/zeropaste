@@ -234,6 +234,18 @@
   .cfgrow .switch { width: 2.9rem; justify-self: start; }
   .cfgclear { font-size: .75rem; padding: .2rem .5rem; grid-column: 2; justify-self: start; }
   .cfgclear.active { color: var(--danger); border-color: var(--danger); }
+  /* invites section: mint row + revealed link + live list */
+  .inviteout { display: flex; gap: .5rem; margin: .55rem 0 0; }
+  .inviteout input { flex: 1 1 auto; width: auto; min-width: 0; font-size: .78rem; color: var(--ok); }
+  .inviteout .rowcopy { flex: 0 0 auto; display: inline-flex; align-items: center; padding: .5rem; }
+  .inviteout .rowcopy svg { width: .95rem; height: .95rem; }
+  .invrow {
+    display: flex; align-items: center; gap: .7rem; margin: .4rem 0 0;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: .35rem .7rem; font-size: .78rem;
+  }
+  .invrow code { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .invmeta { flex: 1 1 auto; text-align: right; color: var(--muted); font-size: .72rem; }
   .cfgactions { margin-top: 1.1rem; justify-content: flex-end; }
   /* switch knob for the boolean knobs */
   .switch {

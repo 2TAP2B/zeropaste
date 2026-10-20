@@ -127,8 +127,12 @@ export async function refreshMe(): Promise<void> {
       $("accuser").classList.add("hidden");
       $("accanon").classList.remove("hidden");
       poll.classList.remove("hidden");
-      const open = me.open !== false;
-      poll.textContent = open ? "create an account - passkey only" : "sign in - new registrations are closed";
+      // a valid invite in hand re-opens the registration pane even on a
+      // closed instance (the server re-validates at begin/finish)
+      const open = me.open !== false || !!inviteToken;
+      poll.textContent = inviteToken
+        ? "invite link detected - create your account"
+        : open ? "create an account - passkey only" : "sign in - new registrations are closed";
       $("reggroup").classList.toggle("hidden", !open);
       $("accor").classList.toggle("hidden", !open); // no choice to divide when only sign-in remains
     }
@@ -242,7 +246,7 @@ export async function registerStart(): Promise<void> {
     const res = await fetch("/api/identity/register/begin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, ...(inviteToken ? { invite: inviteToken } : {}) }),
     });
     if (!res.ok) {
       throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "register begin failed");
@@ -258,6 +262,7 @@ export async function registerStart(): Promise<void> {
       throw new Error(((await fin.json().catch(() => ({}))) as { error?: string }).error ?? "registration failed");
     }
     ($("accerr") as HTMLElement).classList.add("hidden");
+    inviteToken = ""; // burned with the account creation
     await refreshMe();
   } catch (e) {
     accError(e instanceof Error ? e.message : "registration failed");
@@ -334,6 +339,18 @@ export async function bootAccount(): Promise<void> {
 // live binding: compose view reads this to gate the public-paste slider
 // (accounts only) - updated by refreshMe after every /api/me poll
 export let signedIn = false;
+
+// invite capability from the fragment: an admin-minted link lands as
+// /#invite=<token>; read once, stripped like paste keys (fragments never hit
+// server logs), then carried into the register/begin call
+export let inviteToken = "";
+
+export function readInviteFragment(): void {
+  const m = /^#invite=([A-Za-z0-9_-]{20,44})$/.exec(location.hash);
+  if (m?.[1] === undefined) return;
+  inviteToken = m[1];
+  history.replaceState(null, "", location.pathname + location.search); // strip: the link is single-sight
+}
 
 // --- the dashboard page (/dash) ---
 // Reuses the standard header/footer/popovers: the compose cards are hidden,
@@ -494,6 +511,7 @@ function paintConfig(v: CfgView): void {
   setSwitch("cfgopen", "REG_OPEN");
   setSwitch("cfgpublic", "PUBLIC_PASTES");
   setSwitch("cfgreg", "USER_REGISTRATION");
+  setSwitch("cfglocked", "LOCKED");
   ($("cfgttl") as HTMLInputElement).value = String(by["MAX_TTL_DAYS"]?.value ?? "");
   ($("cfgshares") as HTMLInputElement).value = String(by["MAX_SHARES_PER_ACCOUNT"]?.value ?? "");
   ($("cfgupload") as HTMLInputElement).value = String(by["MAX_UPLOAD"]?.value ?? "");
@@ -512,6 +530,7 @@ function cfgBody(): Record<string, unknown> {
   body.regOpen = on("cfgopen");
   body.publicPastes = on("cfgpublic");
   body.userRegistration = on("cfgreg");
+  body.locked = on("cfglocked");
   body.maxTtlDays = num("cfgttl");
   body.maxShares = Math.round(num("cfgshares"));
   body.maxUpload = Math.round(num("cfgupload"));
@@ -576,12 +595,70 @@ function wireConfig(): void {
     btn.classList.toggle("active");
   });
   // boolean knobs: role=switch buttons flip their own aria-checked
-  for (const id of ["cfgopen", "cfgpublic", "cfgreg"]) {
+  for (const id of ["cfgopen", "cfgpublic", "cfgreg", "cfglocked"]) {
     $(id).addEventListener("click", () => {
       const sw = $(id) as HTMLElement;
       sw.setAttribute("aria-checked", sw.getAttribute("aria-checked") === "true" ? "false" : "true");
     });
   }
+  // invites: mint a link, show it once, keep the live list under it
+  const renderInvites = async (): Promise<void> => {
+    const box = $("invitelist") as HTMLElement;
+    box.textContent = "";
+    const res = await fetch("/api/admin/invites").catch(() => null);
+    if (!res?.ok) return;
+    const rows = ((await res.json()) as { invites: { token: string; uses: number; maxUses: number; created: number }[] }).invites;
+    for (const inv of rows) {
+      const row = document.createElement("div");
+      row.className = "invrow";
+      const code = document.createElement("code");
+      code.textContent = inv.token.slice(0, 10) + "…";
+      const meta = document.createElement("span");
+      meta.className = "invmeta";
+      meta.textContent = `${inv.uses}/${inv.maxUses} used`;
+      const del = iconBtn("Revoke invite", IC.del, "rowicon danger");
+      del.addEventListener("click", () => {
+        del.disabled = true;
+        void (async () => {
+          await fetch("/api/admin/invites/" + inv.token, { method: "DELETE" }).catch(() => {});
+          await renderInvites();
+        })();
+      });
+      row.append(code, meta, del);
+      box.append(row);
+    }
+  };
+  const linkFor = (token: string): string => location.origin + "/#invite=" + token;
+  $("invcreate").addEventListener("click", () => {
+    void (async () => {
+      const btn = $("invcreate") as HTMLButtonElement;
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/admin/invites", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uses: Math.max(1, Math.round(Number(($("invcfg") as HTMLInputElement).value) || 1)) }),
+        });
+        if (!res.ok) {
+          throw new Error(await resErr(res, "invite create failed"));
+        }
+        const { token } = (await res.json()) as { token: string };
+        const out = $("invitelink") as HTMLInputElement;
+        out.value = linkFor(token);
+        ($("inviteout") as HTMLElement).classList.remove("hidden");
+        out.focus();
+        out.select();
+        await renderInvites();
+      } catch (e) {
+        cfgError(e instanceof Error ? e.message : "invite create failed");
+      } finally {
+        btn.disabled = false;
+      }
+    })();
+  });
+  $("invcopy").addEventListener("click", () => void copy(($("invitelink") as HTMLInputElement).value, $("invcopy")));
+  $("invitelink").addEventListener("focus", (e) => (e.target as HTMLInputElement).select());
+  void renderInvites();
 }
 
 async function saveName(): Promise<void> {

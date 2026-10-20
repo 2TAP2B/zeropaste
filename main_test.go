@@ -1681,7 +1681,7 @@ func TestAdminConfigGate(t *testing.T) {
 		if json.Unmarshal(rec.Body.Bytes(), &v) != nil {
 			t.Fatalf("unparseable view: %s", rec.Body)
 		}
-		if len(v.Knobs) != 8 {
+		if len(v.Knobs) != 9 {
 			t.Fatalf("want the full knob set, got %d: %s", len(v.Knobs), rec.Body)
 		}
 		if k := knobOf(t, rec.Body.Bytes(), "CREATE_KEY"); k.Kind != "secret" || k.Set || k.Value != nil {
@@ -1879,5 +1879,217 @@ func TestSweepKeepsConfig(t *testing.T) {
 	sweep(dir)
 	if _, err := os.Stat(p); os.IsNotExist(err) {
 		t.Fatal("sweep deleted data/config.json")
+	}
+}
+
+// ---- v0.11: locked compose lane + invite links ----
+
+func TestLockedCompose(t *testing.T) {
+	t.Setenv("LOCKED", "true")
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+	body := fmt.Sprintf(`{"data":%q,"ttl":"1d"}`, fakePayload())
+
+	// the gate probe carries the posture so the client can render the lock card
+	if rec := get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"locked":true`) {
+		t.Fatalf("gate probe locked flag: %s", rec.Body)
+	}
+
+	// abuse case: anonymous visitors must not create anything
+	if rec := adminDo(h, "POST", "/api/paste", body, ""); rec.Code != 403 {
+		t.Fatalf("anon create locked: got %d, want 403", rec.Code)
+	}
+	if rec := adminDo(h, "POST", "/api/uploads", `{"len":100,"ttl":"1d"}`, ""); rec.Code != 403 {
+		t.Fatalf("anon upload init locked: got %d, want 403", rec.Code)
+	}
+	if rec := adminDo(h, "POST", "/api/uploads/abcdefghijk/finish", "", ""); rec.Code != 403 {
+		t.Fatalf("anon upload finish locked: got %d, want 403", rec.Code)
+	}
+
+	// reads stay open for anonymous visitors - the zero-knowledge contract
+	// never depends on an account
+	if rec := get(h, "/api/gate"); rec.Code != 200 {
+		t.Fatalf("gate probe: got %d", rec.Code)
+	}
+
+	// signed-in identities create freely
+	if rec := adminDo(h, "POST", "/api/paste", body, cookie); rec.Code != 200 {
+		t.Fatalf("signed create locked: got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestLockedConfigKnob(t *testing.T) {
+	// file layer beats env for the lock switch
+	t.Setenv("LOCKED", "true")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"locked":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := build(dir, "")
+	if rec := get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"locked":false`) {
+		t.Fatalf("file lock=false must beat env=true: %s", rec.Body)
+	}
+	if err := os.Remove(filepath.Join(dir, "config.json")); err != nil {
+		t.Fatal(err)
+	}
+	h = build(dir, "")
+	if rec := get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"locked":true`) {
+		t.Fatalf("env lock resurfaces without the file: %s", rec.Body)
+	}
+}
+
+func TestInviteLifecycle(t *testing.T) {
+	// a closed instance is the invite mode's home turf
+	t.Setenv("REG_OPEN", "false")
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	// anonymous admin surface is closed
+	if rec := adminDo(h, "POST", "/api/admin/invites", `{}`, ""); rec.Code != 403 {
+		t.Fatalf("anon invite create: got %d, want 403", rec.Code)
+	}
+	if rec := adminDo(h, "GET", "/api/admin/invites", "", ""); rec.Code != 403 {
+		t.Fatalf("anon invite list: got %d, want 403", rec.Code)
+	}
+
+	// mint: default single use
+	rec := adminDo(h, "POST", "/api/admin/invites", `{"uses":2}`, cookie)
+	if rec.Code != 200 {
+		t.Fatalf("invite create: got %d %s", rec.Code, rec.Body)
+	}
+	var minted struct {
+		Token string `json:"token"`
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &minted) != nil || len(minted.Token) != 22 {
+		t.Fatalf("invite token shape: %s", rec.Body)
+	}
+
+	// list shows it
+	rec = adminDo(h, "GET", "/api/admin/invites", "", cookie)
+	if !strings.Contains(rec.Body.String(), `"uses":0`) || !strings.Contains(rec.Body.String(), `"maxUses":2`) {
+		t.Fatalf("invite list missing row: %s", rec.Body)
+	}
+
+	// unit-level gate: closed registration rejects no-token anon, accepts the live token
+	if ok, why := s.inviteGate(""); ok {
+		t.Fatal("closed instance must reject an absent token")
+	} else if !strings.Contains(why, "closed") {
+		t.Fatalf("why: %q", why)
+	}
+	if ok, _ := s.inviteGate(minted.Token); !ok {
+		t.Fatal("live invite must pass the gate")
+	}
+	if ok, _ := s.inviteGate("!!bad-token-shape!!"); ok {
+		t.Fatal("malformed token must fail")
+	}
+	if ok, _ := s.inviteGate(strings.Repeat("A", 22)); ok {
+		t.Fatal("unknown token must fail")
+	}
+
+	// consume: two uses allowed, third rejected, file gone at exhaustion
+	s.inviteConsume(minted.Token)
+	if ok, _ := s.inviteGate(minted.Token); !ok {
+		t.Fatal("second use still valid")
+	}
+	s.inviteConsume(minted.Token)
+	if ok, _ := s.inviteGate(minted.Token); ok {
+		t.Fatal("exhausted invite must fail the gate")
+	}
+	if _, err := os.Stat(filepath.Join(invitesDir(dir), minted.Token+".json")); !os.IsNotExist(err) {
+		t.Fatal("exhausted invite file not removed")
+	}
+
+	// revoke: delete endpoint removes the invite file
+	rec = adminDo(h, "POST", "/api/admin/invites", `{}`, cookie)
+	json.Unmarshal(rec.Body.Bytes(), &minted)
+	if rec := adminDo(h, "DELETE", "/api/admin/invites/"+minted.Token, "", cookie); rec.Code != 200 {
+		t.Fatalf("revoke: got %d", rec.Code)
+	}
+	if ok, _ := s.inviteGate(minted.Token); ok {
+		t.Fatal("revoked invite must fail")
+	}
+	// idempotent second revoke
+	if rec := adminDo(h, "DELETE", "/api/admin/invites/"+minted.Token, "", cookie); rec.Code != 200 {
+		t.Fatalf("second revoke: got %d", rec.Code)
+	}
+	// bad token charset on the delete path
+	if rec := adminDo(h, "DELETE", "/api/admin/invites/bad!!", "", cookie); rec.Code != 404 {
+		t.Fatalf("bad revoke token: got %d, want 404", rec.Code)
+	}
+}
+
+func TestInviteRegisterFlow(t *testing.T) {
+	// closed instance: begin carries the invite; finish re-validates and
+	// consumes only on success. The webauthn ceremony itself cannot run on an
+	// IP-literal httptest host (begin 400s) - the invite gate logic around it
+	// is what these assertions cover.
+	t.Setenv("REG_OPEN", "false")
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+
+	rec := adminDo(h, "POST", "/api/admin/invites", `{}`, sessionCookieFor(s))
+	var minted struct {
+		Token string `json:"token"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &minted)
+
+	// anon begin WITHOUT token -> 403 closed (pre-existing posture)
+	if rec := adminDo(h, "POST", "/api/identity/register/begin", `{"name":"x"}`, ""); rec.Code != 403 {
+		t.Fatalf("anon begin closed: got %d, want 403", rec.Code)
+	}
+	// anon begin with a MALFORMED token -> 403 with the malformed message
+	if rec := adminDo(h, "POST", "/api/identity/register/begin", `{"name":"x","invite":"bad!!"}`, ""); rec.Code != 403 || !strings.Contains(rec.Body.String(), "malformed") {
+		t.Fatalf("anon begin malformed invite: got %d %s", rec.Code, rec.Body)
+	}
+	// anon begin with a LIVE token passes the invite gate and reaches the
+	// ceremony (httptest.NewRequest carries Host example.com - a domain, so
+	// webauthn builds fine and the begin answers with real options)
+	rec = adminDo(h, "POST", "/api/identity/register/begin", `{"name":"invited","invite":"`+minted.Token+`"}`, "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"sessionId"`) {
+		t.Fatalf("invited begin should run the ceremony: got %d %s", rec.Code, rec.Body)
+	}
+	// the invite is NOT consumed by a begin that never finishes
+	if ok, _ := s.inviteGate(minted.Token); !ok {
+		t.Fatal("abandoned ceremony must not burn the invite")
+	}
+}
+
+func TestLockedAdminPersistence(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	cookie := sessionCookieFor(s)
+
+	// PUT locked=true via the admin API and verify the file layer reflects it
+	body := `{"locked":true}`
+	rec := adminDo(h, "PUT", "/api/admin/config", body, cookie)
+	if rec.Code != 200 {
+		t.Fatalf("locked put: got %d %s", rec.Code, rec.Body)
+	}
+	if k := knobOf(t, rec.Body.Bytes(), "LOCKED"); k.Source != "file" || k.Value != true {
+		t.Fatalf("locked knob must be file true after put: %+v", k)
+	}
+
+	// A fresh boot must load the file layer and enforce the lock
+	h = build(dir, "")
+	if rec = get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"locked":true`) {
+		t.Fatalf("fresh boot must see file locked=true: %s", rec.Body)
+	}
+	if rec = adminDo(h, "POST", "/api/paste", fmt.Sprintf(`{"data":%q,"ttl":"1d"}`, fakePayload()), ""); rec.Code != 403 {
+		t.Fatalf("anon create must be locked after reboot: got %d", rec.Code)
+	}
+
+	// Clearing locked via UI (sending false) persists the unlock
+	if rec = adminDo(h, "PUT", "/api/admin/config", `{"locked":false}`, cookie); rec.Code != 200 {
+		t.Fatalf("locked=false put: got %d %s", rec.Code, rec.Body)
+	}
+	h = build(dir, "")
+	if rec = get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"locked":false`) {
+		t.Fatalf("fresh boot must see file locked=false: %s", rec.Body)
 	}
 }

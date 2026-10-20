@@ -12,8 +12,8 @@ export function humanSize(n: number): string {
   return (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) + " " + units[u - 1];
 }
 
-export function show(id: "gate" | "compose" | "linkbox" | "read"): void {
-  for (const s of ["gate", "compose", "linkbox", "read"]) {
+export function show(id: "gate" | "lockcard" | "compose" | "linkbox" | "read"): void {
+  for (const s of ["gate", "lockcard", "compose", "linkbox", "read"]) {
     $(s).classList.toggle("hidden", s !== id);
   }
   window.scrollTo(0, 0);
