@@ -411,6 +411,26 @@
   .filedata { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .filedata.fsize { flex: 0 0 auto; color: var(--muted); font-size: .75rem; }
   .filedata.name { flex: 1 1 auto; }
+  /* pdf / docs / archives / media: download card - type glyph + name column
+     + a real Download button (accent ghost: visible at a glance) */
+  .dlcard { display: flex; align-items: center; gap: .7rem; padding: .6rem .7rem; }
+  .fileicon {
+    flex: 0 0 auto; width: 2.5rem; height: 2.5rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--accent); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .fileicon svg { width: 1.15rem; height: 1.15rem; }
+  .filemid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: .05rem; }
+  .filemid .filedata.name, .filemid .filedata.fsize { display: block; }
+  .filesave.dlbtn {
+    display: inline-flex; align-items: center; gap: .45rem;
+    font-size: .8rem; padding: .55rem .85rem;
+    color: var(--accent); background: var(--surface); border-color: var(--border);
+  }
+  .filesave.dlbtn:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .filesave.dlbtn svg { width: 1rem; height: 1rem; flex: 0 0 auto; }
+  .filesave.dlbtn:disabled { opacity: .75; }
   /* image attachments: media card with inline preview + lightbox */
   .filecard {
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
