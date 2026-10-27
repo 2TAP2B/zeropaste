@@ -234,6 +234,25 @@
   .cfgrow .switch { width: 2.9rem; justify-self: start; }
   .cfgclear { font-size: .75rem; padding: .2rem .5rem; grid-column: 2; justify-self: start; }
   .cfgclear.active { color: var(--danger); border-color: var(--danger); }
+  /* exclusive choices: whole row clickable, custom radio dot, checked row
+     carries the accent border; descriptions sit under the title */
+  .cfgchoice { margin: .8rem 0; }
+  .cfgopt {
+    display: flex; gap: .6rem; align-items: flex-start;
+    padding: .5rem .6rem; margin: 0 0 .25rem;
+    border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+  }
+  .cfgopt:hover { border-color: var(--muted); }
+  .cfgopt:has(input:checked) { border-color: var(--accent); }
+  .cfgopt input[type="radio"] {
+    appearance: none; flex: 0 0 auto; width: 15px; height: 15px; margin: .2rem 0 0;
+    border: 1px solid var(--border); border-radius: 50%; background: var(--surface); cursor: pointer;
+  }
+  .cfgopt input[type="radio"]:checked { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--surface); }
+  .cfgopt input[type="radio"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cfgopt .opttext { display: block; min-width: 0; }
+  .cfgopt .opttext b { display: block; color: var(--text); font-size: .85rem; }
+  .cfgopt .opttext small { display: block; color: var(--muted); font-size: .75rem; margin-top: .15rem; }
   /* invites section: mint row + revealed link + live list */
   .inviteout { display: flex; gap: .5rem; margin: .55rem 0 0; }
   .inviteout input { flex: 1 1 auto; width: auto; min-width: 0; font-size: .78rem; color: var(--ok); }

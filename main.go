@@ -476,15 +476,17 @@ func init() {
 // UI-editable document. `restartNeeded` in the view is the knob-by-knob diff
 // between the file and the running values.
 type adminCfg struct {
-	CreateKey        *string `json:"createKey,omitempty"` // paste-gate passphrase; "" clears it
-	RegOpen          *bool   `json:"regOpen,omitempty"`
+	CreateKey        *string `json:"createKey,omitempty"`    // paste-gate passphrase; "" clears it
+	PasteAccess      *string `json:"pasteAccess,omitempty"`  // exclusive: "open" | "passphrase" | "members"
+	Registration     *string `json:"registration,omitempty"` // exclusive: "open" | "first" | "invite"
+	RegOpen          *bool   `json:"regOpen,omitempty"`      // pre-0.12.1 encoding - migrated to Registration
 	PublicPastes     *bool   `json:"publicPastes,omitempty"`
 	UserRegistration *bool   `json:"userRegistration,omitempty"` // true = first-user bootstrap stays on
 	MaxTtlDays       *int64  `json:"maxTtlDays,omitempty"`
 	MaxShares        *int64  `json:"maxShares,omitempty"`
 	MaxUpload        *int64  `json:"maxUpload,omitempty"` // bytes
 	Chunk            *int64  `json:"chunk,omitempty"`     // bytes, must stay <= effective MAX_UPLOAD
-	Locked           *bool   `json:"locked,omitempty"`    // v0.11: invite-only compose - reads stay open
+	Locked           *bool   `json:"locked,omitempty"`    // pre-0.12.1 encoding - migrated to PasteAccess
 }
 
 var (
@@ -547,11 +549,55 @@ func cfgChunk() int64 {
 	}
 	return chunkBytes
 }
-func cfgLocked() bool {
-	if f := cfgHold.Load().Locked; f != nil {
-		return *f
+
+// cfgPasteAccess: the exclusive paste-access mode the RUNNING process enforces.
+// Resolution: file pasteAccess > legacy file encodings (locked, createKey) >
+// env CREATE_KEY > env LOCKED > open. v0.12.1 folded the old createKey-gate +
+// locked double-gate into one exclusive choice; the legacy fields stay valid
+// on disk so old config files migrate without an admin visit.
+func pasteAccessFrom(c *adminCfg, bootKey string) string {
+	if f := c.PasteAccess; f != nil {
+		switch *f {
+		case "open", "passphrase", "members":
+			return *f
+		}
+		return "open" // belt: adminPut rejects anything else before it persists
 	}
-	return envBool("LOCKED", false)
+	// legacy encodings: resolve each old knob exactly as the per-knob code did
+	// (file entry beats its env), then the stricter gate wins the exclusive
+	// choice - members over passphrase over open.
+	members := false
+	if f := c.Locked; f != nil {
+		members = *f
+	} else {
+		members = envBool("LOCKED", false)
+	}
+	if members {
+		return "members"
+	}
+	gated := bootKey != ""
+	if f := c.CreateKey; f != nil {
+		gated = *f != "" // an explicit file clear beats the env layer
+	}
+	if gated {
+		return "passphrase"
+	}
+	return "open"
+}
+
+func cfgPasteAccess() string {
+	return pasteAccessFrom(cfgHold.Load(), os.Getenv("CREATE_KEY"))
+}
+
+// cfgGateOn: the passphrase pre-screen guards the create lane only in
+// passphrase mode with a non-empty key - members mode authenticates by
+// session, open mode by nothing.
+func cfgGateOn(bootKey string) bool {
+	return pasteAccessFrom(cfgHold.Load(), bootKey) == "passphrase" && cfgCreateKey(bootKey) != ""
+}
+
+func cfgLocked() bool {
+	return cfgPasteAccess() == "members"
 }
 
 // ---- invites: data/invites/<token>.json - registration links an admin
@@ -639,10 +685,18 @@ func (s *sessions) inviteConsume(token string) {
 
 // source of truth for the UI chip: file beats env beats default
 var cfgJSONKey = map[string]string{ // env knob name -> config.json field
-	"CREATE_KEY": "createKey", "REG_OPEN": "regOpen", "PUBLIC_PASTES": "publicPastes",
-	"USER_REGISTRATION": "userRegistration", "MAX_TTL_DAYS": "maxTtlDays",
+	"CREATE_KEY": "createKey", "PASTE_ACCESS": "pasteAccess", "REGISTRATION": "registration",
+	"REG_OPEN": "regOpen", "LOCKED": "locked", "USER_REGISTRATION": "userRegistration",
+	"PUBLIC_PASTES":          "publicPastes",
+	"MAX_TTL_DAYS":           "maxTtlDays",
 	"MAX_SHARES_PER_ACCOUNT": "maxShares", "MAX_UPLOAD": "maxUpload", "CHUNK": "chunk",
-	"LOCKED": "locked",
+}
+
+// cfgJSONLegacy: pre-0.12.1 file encodings the choice knobs also resolve from
+// (checked after the primary key, before the env layer)
+var cfgJSONLegacy = map[string][]string{
+	"PASTE_ACCESS": {"locked", "createKey"},
+	"REGISTRATION": {"regOpen", "userRegistration"},
 }
 
 func cfgSource(name string) string {
@@ -651,6 +705,11 @@ func cfgSource(name string) string {
 		if json.Unmarshal(data, &probe) == nil {
 			if _, ok := probe[cfgJSONKey[name]]; ok {
 				return "file"
+			}
+			for _, legacy := range cfgJSONLegacy[name] { // pre-0.12.1 encodings still own the file layer
+				if _, ok := probe[legacy]; ok {
+					return "file"
+				}
 			}
 		}
 	}
@@ -788,7 +847,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 // the key or a hint of it.
 func gateStatus(key string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		respond(w, 200, map[string]any{"enabled": cfgCreateKey(key) != "", "maxTtlDays": cfgMaxTTL(), "maxUpload": cfgMaxUpload(), "public": publicPastesOn(), "locked": cfgLocked()})
+		respond(w, 200, map[string]any{"enabled": cfgGateOn(key), "maxTtlDays": cfgMaxTTL(), "maxUpload": cfgMaxUpload(), "public": publicPastesOn(), "locked": cfgLocked()})
 	}
 }
 
@@ -856,10 +915,9 @@ func cfgView(bootKey string) map[string]any {
 			}
 			return bootKey != "" // not in the file: the boot env layer decides
 		}()},
-		{"name": "REG_OPEN", "kind": "bool", "source": cfgSource("REG_OPEN"), "value": boolVal(p.RegOpen, envBool("REG_OPEN", true))},
+		{"name": "PASTE_ACCESS", "kind": "choice", "source": cfgSource("PASTE_ACCESS"), "value": pasteAccessFrom(p, bootKey)},
+		{"name": "REGISTRATION", "kind": "choice", "source": cfgSource("REGISTRATION"), "value": registrationFrom(p)},
 		{"name": "PUBLIC_PASTES", "kind": "bool", "source": cfgSource("PUBLIC_PASTES"), "value": boolVal(p.PublicPastes, envBool("PUBLIC_PASTES", true))},
-		{"name": "USER_REGISTRATION", "kind": "bool", "source": cfgSource("USER_REGISTRATION"), "value": !boolVal(p.UserRegistration, regFirstOnly)},
-		{"name": "LOCKED", "kind": "bool", "source": cfgSource("LOCKED"), "value": boolVal(p.Locked, envBool("LOCKED", false))},
 		{"name": "MAX_TTL_DAYS", "kind": "int", "source": cfgSource("MAX_TTL_DAYS"), "value": intVal(p.MaxTtlDays, maxTTL)},
 		{"name": "MAX_SHARES_PER_ACCOUNT", "kind": "int", "source": cfgSource("MAX_SHARES_PER_ACCOUNT"), "value": intVal(p.MaxShares, maxShares)},
 		{"name": "MAX_UPLOAD", "kind": "int", "source": cfgSource("MAX_UPLOAD"), "value": intVal(p.MaxUpload, maxBlobBytes)},
@@ -908,17 +966,41 @@ func adminPut(bootKey string, sess *sessions) http.HandlerFunc {
 		if patch.CreateKey != nil {
 			next.CreateKey = patch.CreateKey
 		}
-		if patch.RegOpen != nil {
-			next.RegOpen = patch.RegOpen
+		if patch.PasteAccess != nil {
+			switch *patch.PasteAccess {
+			case "open", "passphrase", "members":
+			default:
+				httpError(w, 400, "pasteAccess must be open, passphrase or members")
+				return
+			}
+			if *patch.PasteAccess == "passphrase" { // passphrase mode needs a key: the patch's, the file's, or the boot env's
+				eff := bootKey
+				if patch.CreateKey != nil {
+					eff = *patch.CreateKey
+				} else if next.CreateKey != nil {
+					eff = *next.CreateKey
+				}
+				if eff == "" {
+					httpError(w, 400, "passphrase mode needs a gate key")
+					return
+				}
+			}
+			next.PasteAccess = patch.PasteAccess
+			next.Locked = nil // superseded encoding: the mode decides now
+		}
+		if patch.Registration != nil {
+			switch *patch.Registration {
+			case "open", "first", "invite":
+			default:
+				httpError(w, 400, "registration must be open, first or invite")
+				return
+			}
+			next.Registration = patch.Registration
+			next.RegOpen = nil // superseded encodings: the mode decides now
+			next.UserRegistration = nil
 		}
 		if patch.PublicPastes != nil {
 			next.PublicPastes = patch.PublicPastes
-		}
-		if patch.UserRegistration != nil {
-			next.UserRegistration = patch.UserRegistration
-		}
-		if patch.Locked != nil {
-			next.Locked = patch.Locked
 		}
 		if patch.MaxTtlDays != nil {
 			if *patch.MaxTtlDays < 1 || *patch.MaxTtlDays > 366 {
@@ -1059,10 +1141,16 @@ func adminApply(sess *sessions) http.HandlerFunc {
 	})
 }
 
-// authGate checks Authorization: Bearer <key> in constant time when a key is
-// configured; otherwise it is a pass-through.
+// authGate checks Authorization: Bearer <key> in constant time while
+// passphrase mode is active; otherwise it is a pass-through (open mode has no
+// gate, members mode authenticates by session - the double-gate encoding is
+// gone since v0.12.1).
 func authGate(key string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !cfgGateOn(key) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		eff := cfgCreateKey(key) // file layer can add or replace the boot key
 		if eff == "" {
 			next.ServeHTTP(w, r)
@@ -2599,31 +2687,57 @@ func publicPastesOn() bool {
 	return envBool("PUBLIC_PASTES", true)
 }
 
-func registrationOpen(identCount int) bool {
-	if !accountsOn {
-		return false
-	}
-	if f := cfgHold.Load().RegOpen; f != nil {
-		if !*f {
-			return false
+// registrationFrom: the exclusive registration mode the layer resolves to.
+// File registration > legacy file encodings (regOpen=false, userRegistration=false)
+// > env REG_OPEN > env USER_REGISTRATION (boot-frozen regFirstOnly) > open.
+// "first" and "invite" both close fresh sign-ups - they differ only while no
+// identity exists; invite links bypass closure in both (see invitesGate).
+func registrationFrom(c *adminCfg) string {
+	if f := c.Registration; f != nil {
+		switch *f {
+		case "open", "first", "invite":
+			return *f
 		}
+		return "open" // belt: adminPut rejects anything else before it persists
+	}
+	// legacy pair, in the exact pre-0.12.1 order: closure (file regOpen ??
+	// env REG_OPEN) first, then the first-only layer (file userRegistration ??
+	// boot regFirstOnly). regOpen=true in the file beats env REG_OPEN=false.
+	closed := false
+	if f := c.RegOpen; f != nil {
+		closed = !*f
 	} else if v := strings.TrimSpace(os.Getenv("REG_OPEN")); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
 			log.Fatalf("REG_OPEN: %q invalid, want true/false", v)
 		}
-		if !b {
-			return false
-		}
+		closed = !b
 	}
 	firstOnly := regFirstOnly
-	if f := cfgHold.Load().UserRegistration; f != nil {
+	if f := c.UserRegistration; f != nil {
 		firstOnly = !*f
 	}
-	if firstOnly && identCount > 0 {
+	if closed {
+		return "invite"
+	}
+	if firstOnly {
+		return "first"
+	}
+	return "open"
+}
+
+func registrationOpen(identCount int) bool {
+	if !accountsOn {
 		return false
 	}
-	return true
+	switch registrationFrom(cfgHold.Load()) {
+	case "invite":
+		return false
+	case "first":
+		return identCount == 0
+	default:
+		return true
+	}
 }
 
 // identCount: number of stored identity files (small friend-group store).

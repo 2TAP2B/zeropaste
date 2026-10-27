@@ -10,10 +10,10 @@ var SHELL_VERSION = 'v0.11.0';
 var CACHE = 'zp-shell-' + SHELL_VERSION;
 var SHELL = [
   '/',
-  '/assets/style.css?v=0.12.0',
-  '/assets/app.js?v=0.12.0',
-  '/assets/atom-one-light.min.css?v=0.12.0',
-  '/assets/atom-one-dark.min.css?v=0.12.0',
+  '/assets/style.css?v=0.12.1',
+  '/assets/app.js?v=0.12.1',
+  '/assets/atom-one-light.min.css?v=0.12.1',
+  '/assets/atom-one-dark.min.css?v=0.12.1',
   '/assets/highlight.min.js',
   '/assets/qrcode.min.js',
   '/assets/manifest.webmanifest',

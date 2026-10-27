@@ -19,9 +19,9 @@
 <link rel="icon" href="/assets/icon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.12.0" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.12.0" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.12.0">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.12.1" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.12.1" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.12.1">
 </head>
 <body>
 <main>
@@ -306,29 +306,49 @@
           </div>
           <div id="cfgbody">
             <div class="cfgsection">
-            <b>access</b>
-            <div class="cfgrow">
-              <label for="cfgcreate" class="cfglabel">gate key</label>
+            <b>who can paste</b>
+            <div class="cfgchoice" id="cfgaccess">
+              <label class="cfgopt">
+                <input type="radio" name="zpaccess" value="open">
+                <span class="opttext"><b>anyone</b><small>open instance - visitors paste right away</small></span>
+              </label>
+              <label class="cfgopt">
+                <input type="radio" name="zpaccess" value="passphrase">
+                <span class="opttext"><b>gate passphrase</b><small>visitors unlock the compose screen with a shared passphrase first</small></span>
+              </label>
+              <label class="cfgopt">
+                <input type="radio" name="zpaccess" value="members">
+                <span class="opttext"><b>members only</b><small>pasting needs a passkey sign-in - reading stays open</small></span>
+              </label>
+            </div>
+            <div class="cfgrow hidden" id="cfgkeyrow">
+              <label for="cfgcreate" class="cfglabel">gate passphrase</label>
               <button type="button" id="cfgclear" class="cfgclear" title="clear the create-gate passphrase">✕</button>
               <input type="password" id="cfgcreate" placeholder="unchanged" autocomplete="off">
             </div>
             <div class="cfgrow">
-              <label for="cfgopen" class="cfglabel">sign-ins open</label>
-              <button type="button" id="cfgopen" class="switch" role="switch" aria-checked="true" aria-label="sign-ins open"></button>
+              <label for="cfgpublic" class="cfglabel">allow plaintext public pastes</label>
+              <button type="button" id="cfgpublic" class="switch" role="switch" aria-checked="true" aria-label="allow plaintext public pastes"></button>
             </div>
-            <div class="cfgrow">
-              <label for="cfgpublic" class="cfglabel">public pastes</label>
-              <button type="button" id="cfgpublic" class="switch" role="switch" aria-checked="true" aria-label="public pastes"></button>
+            <div class="hint">Plaintext pastes carry no encryption: anyone with the link reads them in the clear. Creation stays account-only and the server stores exactly what was sent.</div>
             </div>
-            <div class="cfgrow">
-              <label for="cfgreg" class="cfglabel">signup closes after first account</label>
-              <button type="button" id="cfgreg" class="switch" role="switch" aria-checked="false" aria-label="signup closes after first account"></button>
+            <div class="cfgsection">
+            <b>accounts</b>
+            <div class="cfgchoice" id="cfgregroup">
+              <label class="cfgopt">
+                <input type="radio" name="zpreg" value="open">
+                <span class="opttext"><b>open sign-up</b><small>anyone can create an account with a passkey</small></span>
+              </label>
+              <label class="cfgopt">
+                <input type="radio" name="zpreg" value="first">
+                <span class="opttext"><b>closes after first account</b><small>first-user bootstrap - the instance belongs to whoever registers first</small></span>
+              </label>
+              <label class="cfgopt">
+                <input type="radio" name="zpreg" value="invite">
+                <span class="opttext"><b>invite links only</b><small>sign-up is closed - invite links below unlock registration for one friend each</small></span>
+              </label>
             </div>
-            <div class="cfgrow">
-              <label for="cfglocked" class="cfglabel">locked instance</label>
-              <button type="button" id="cfglocked" class="switch" role="switch" aria-checked="false" aria-label="locked instance"></button>
             </div>
-          </div>
           <div class="cfgsection">
             <b>limits</b>
             <div class="cfgrow">
@@ -429,6 +449,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.12.0"></script>
+<script src="/assets/app.js?v=0.12.1"></script>
 </body>
 </html>

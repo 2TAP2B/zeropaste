@@ -466,13 +466,16 @@ interface CfgKnob {
   kind: string;
   source: string;
   set?: boolean;
-  value?: boolean | number;
+  value?: boolean | number | string;
 }
 
 interface CfgView {
   knobs: CfgKnob[];
   restartNeeded: boolean;
 }
+
+// whether the server holds a gate key (CREATE_KEY set flag from the last view)
+let keySet = false;
 
 function cfgError(msg: string): void {
   const err = $("cfgerr");
@@ -503,15 +506,18 @@ function cfgNote(msg: string): void {
 // operational state the admin needs: a saved-but-not-running draft
 function paintConfig(v: CfgView): void {
   const by: Record<string, CfgKnob> = Object.fromEntries(v.knobs.map((k) => [k.name, k]));
-  const setSwitch = (id: string, name: string): void => {
-    const k = by[name];
-    if (!k) return;
-    ($(id) as HTMLElement).setAttribute("aria-checked", String(k.value === true));
+  const pick = (group: string, val: string): void => {
+    for (const el of ($(group) as HTMLElement).querySelectorAll<HTMLInputElement>("input[type=radio]")) {
+      el.checked = el.value === val;
+    }
   };
-  setSwitch("cfgopen", "REG_OPEN");
-  setSwitch("cfgpublic", "PUBLIC_PASTES");
-  setSwitch("cfgreg", "USER_REGISTRATION");
-  setSwitch("cfglocked", "LOCKED");
+  const access = String(by["PASTE_ACCESS"]?.value ?? "open");
+  pick("cfgaccess", access);
+  ($("cfgkeyrow") as HTMLElement).classList.toggle("hidden", access !== "passphrase");
+  keySet = by["CREATE_KEY"]?.set === true;
+  pick("cfgregroup", String(by["REGISTRATION"]?.value ?? "open"));
+  const k = by["PUBLIC_PASTES"];
+  if (k) ($("cfgpublic") as HTMLElement).setAttribute("aria-checked", String(k.value === true));
   ($("cfgttl") as HTMLInputElement).value = String(by["MAX_TTL_DAYS"]?.value ?? "");
   ($("cfgshares") as HTMLInputElement).value = String(by["MAX_SHARES_PER_ACCOUNT"]?.value ?? "");
   ($("cfgupload") as HTMLInputElement).value = String(by["MAX_UPLOAD"]?.value ?? "");
@@ -525,12 +531,12 @@ function cfgBody(): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   const create = ($("cfgcreate") as HTMLInputElement).value;
   if (create || ($("cfgclear") as HTMLElement).classList.contains("active")) body.createKey = create;
-  const on = (id: string): boolean => ($(id) as HTMLElement).getAttribute("aria-checked") === "true";
+  body.pasteAccess =
+    ($("cfgaccess") as HTMLElement).querySelector<HTMLInputElement>("input[type=radio]:checked")?.value ?? "open";
+  body.registration =
+    ($("cfgregroup") as HTMLElement).querySelector<HTMLInputElement>("input[type=radio]:checked")?.value ?? "open";
+  body.publicPastes = ($("cfgpublic") as HTMLElement).getAttribute("aria-checked") === "true";
   const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
-  body.regOpen = on("cfgopen");
-  body.publicPastes = on("cfgpublic");
-  body.userRegistration = on("cfgreg");
-  body.locked = on("cfglocked");
   body.maxTtlDays = num("cfgttl");
   body.maxShares = Math.round(num("cfgshares"));
   body.maxUpload = Math.round(num("cfgupload"));
@@ -555,11 +561,16 @@ function wireConfig(): void {
   const save = async (apply: boolean): Promise<void> => {
     const err = $("cfgerr");
     err.classList.add("hidden");
+    const draft = cfgBody();
+    if (draft.pasteAccess === "passphrase" && !draft.createKey && !keySet) {
+      cfgError("passphrase mode needs a gate key - type one into the field");
+      return;
+    }
     try {
       const res = await fetch("/api/admin/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cfgBody()),
+        body: JSON.stringify(draft),
       });
       if (!res.ok) {
         throw new Error(await resErr(res, "save failed"));
@@ -595,12 +606,18 @@ function wireConfig(): void {
     btn.classList.toggle("active");
   });
   // boolean knobs: role=switch buttons flip their own aria-checked
-  for (const id of ["cfgopen", "cfgpublic", "cfgreg", "cfglocked"]) {
-    $(id).addEventListener("click", () => {
-      const sw = $(id) as HTMLElement;
-      sw.setAttribute("aria-checked", sw.getAttribute("aria-checked") === "true" ? "false" : "true");
-    });
-  }
+  $("cfgpublic").addEventListener("click", () => {
+    const sw = $("cfgpublic") as HTMLElement;
+    sw.setAttribute("aria-checked", sw.getAttribute("aria-checked") === "true" ? "false" : "true");
+  });
+  // the gate-key field belongs to passphrase mode only
+  $("cfgaccess").addEventListener("change", () => {
+    ($("cfgkeyrow") as HTMLElement).classList.toggle(
+      "hidden",
+      ($("cfgaccess") as HTMLElement).querySelector<HTMLInputElement>("input[type=radio]:checked")?.value !==
+        "passphrase",
+    );
+  });
   // invites: mint a link, show it once, keep the live list under it
   const renderInvites = async (): Promise<void> => {
     const box = $("invitelist") as HTMLElement;

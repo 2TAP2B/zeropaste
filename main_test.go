@@ -1681,11 +1681,17 @@ func TestAdminConfigGate(t *testing.T) {
 		if json.Unmarshal(rec.Body.Bytes(), &v) != nil {
 			t.Fatalf("unparseable view: %s", rec.Body)
 		}
-		if len(v.Knobs) != 9 {
+		if len(v.Knobs) != 8 {
 			t.Fatalf("want the full knob set, got %d: %s", len(v.Knobs), rec.Body)
 		}
 		if k := knobOf(t, rec.Body.Bytes(), "CREATE_KEY"); k.Kind != "secret" || k.Set || k.Value != nil {
 			t.Fatalf("CREATE_KEY must be an unset secret, got %+v", k)
+		}
+		if k := knobOf(t, rec.Body.Bytes(), "PASTE_ACCESS"); k.Kind != "choice" || k.Value != "open" || k.Source != "default" {
+			t.Fatalf("PASTE_ACCESS default echo wrong: %+v", k)
+		}
+		if k := knobOf(t, rec.Body.Bytes(), "REGISTRATION"); k.Kind != "choice" || k.Value != "open" {
+			t.Fatalf("REGISTRATION default echo wrong: %+v", k)
 		}
 		if k := knobOf(t, rec.Body.Bytes(), "MAX_TTL_DAYS"); k.Value != float64(30) || k.Source != "default" {
 			t.Fatalf("MAX_TTL_DAYS default echo wrong: %+v", k)
@@ -1702,7 +1708,7 @@ func TestAdminConfigPrecedence(t *testing.T) {
 	dir := t.TempDir()
 
 	// file layer overrides env for the knob it names and leaves the rest
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"regOpen":true,"maxTtlDays":20}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"registration":"open","maxTtlDays":20}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	h := build(dir, "")
@@ -1712,8 +1718,8 @@ func TestAdminConfigPrecedence(t *testing.T) {
 	s := testSession(t, dir) // identity belongs to the SAME dir; loaded AFTER build above
 	cookie := sessionCookieFor(s)
 	rec := adminDo(h, "GET", "/api/admin/config", "", cookie)
-	if k := knobOf(t, rec.Body.Bytes(), "REG_OPEN"); k.Source != "file" || k.Value != true {
-		t.Fatalf("regOpen file layer lost: %+v", k)
+	if k := knobOf(t, rec.Body.Bytes(), "REGISTRATION"); k.Source != "file" || k.Value != "open" {
+		t.Fatalf("registration file layer lost: %+v", k)
 	}
 	if k := knobOf(t, rec.Body.Bytes(), "PUBLIC_PASTES"); k.Source != "default" || k.Value != true {
 		t.Fatalf("unnamed knob must fall through to env/default: %+v", k)
@@ -1724,17 +1730,17 @@ func TestAdminConfigPrecedence(t *testing.T) {
 	}
 	json.Unmarshal(adminDo(h, "GET", "/api/me", "", cookie).Body.Bytes(), &me)
 	if !me.Open {
-		t.Fatal("regOpen file layer says open - /api/me open must stay true")
+		t.Fatal("registration file layer says open - /api/me open must stay true")
 	}
 
-	// bootstrap close via file: userRegistration=false means "closes after the first account"
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"regOpen":false,"userRegistration":false}`), 0o600); err != nil {
+	// invite close via file: registration=invite closes fresh sign-up
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"registration":"invite"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	h = build(dir, "")
 	json.Unmarshal(adminDo(h, "GET", "/api/me", "", cookie).Body.Bytes(), &me)
 	if me.Open {
-		t.Fatal("regOpen file false must close fresh registration for /api/me")
+		t.Fatal("registration file invite must close fresh registration for /api/me")
 	}
 
 	// env-only fallback: no file -> the boot layer resurfaces (REG_OPEN env
@@ -1758,16 +1764,19 @@ func TestAdminConfigValidation(t *testing.T) {
 	h := build(dir, "")
 	cookie := sessionCookieFor(s)
 	bad := []string{
-		`{"maxTtlDays":0}`,      // below floor
-		`{"maxTtlDays":400}`,    // above ceiling
-		`{"maxShares":-1}`,      // negative
-		`{"maxUpload":100}`,     // below 1 MiB
-		`{"chunk":1024}`,        // below 64 KiB
-		`{"chunk":67108865}`,    // above 64 MiB
-		`{"chunk":68719476736}`, // chunk above maxUpload headroom
-		`{"regOpen":"yes"}`,     // wrong type
-		`{"accountsOff":true}`,  // unknown field: USER_ACCOUNTS is env-only on purpose
-		`not-json`,              // undecodable
+		`{"maxTtlDays":0}`,             // below floor
+		`{"maxTtlDays":400}`,           // above ceiling
+		`{"maxShares":-1}`,             // negative
+		`{"maxUpload":100}`,            // below 1 MiB
+		`{"chunk":1024}`,               // below 64 KiB
+		`{"chunk":67108865}`,           // above 64 MiB
+		`{"chunk":68719476736}`,        // chunk above maxUpload headroom
+		`{"regOpen":"yes"}`,            // wrong type
+		`{"accountsOff":true}`,         // unknown field: USER_ACCOUNTS is env-only on purpose
+		`{"pasteAccess":"chaos"}`,      // invalid mode
+		`{"registration":"chaos"}`,     // invalid mode
+		`{"pasteAccess":"passphrase"}`, // passphrase with no key anywhere
+		`not-json`,                     // undecodable
 	}
 	for _, b := range bad {
 		if rec := adminDo(h, "PUT", "/api/admin/config", b, cookie); rec.Code != 400 {
@@ -1786,12 +1795,18 @@ func TestAdminConfigPersistence(t *testing.T) {
 	h := build(dir, "")
 	cookie := sessionCookieFor(s)
 
-	rec := adminDo(h, "PUT", "/api/admin/config", `{"maxTtlDays":200,"createKey":"gate-pass"}`, cookie)
+	rec := adminDo(h, "PUT", "/api/admin/config", `{"maxTtlDays":200,"createKey":"gate-pass","pasteAccess":"passphrase","registration":"invite"}`, cookie)
 	if rec.Code != 200 {
 		t.Fatalf("PUT: got %d %s", rec.Code, rec.Body)
 	}
 	if k := knobOf(t, rec.Body.Bytes(), "MAX_TTL_DAYS"); k.Source != "file" || k.Value != float64(200) {
 		t.Fatalf("view after PUT: %+v", k)
+	}
+	if k := knobOf(t, rec.Body.Bytes(), "PASTE_ACCESS"); k.Source != "file" || k.Value != "passphrase" {
+		t.Fatalf("PASTE_ACCESS view after PUT: %+v", k)
+	}
+	if k := knobOf(t, rec.Body.Bytes(), "REGISTRATION"); k.Source != "file" || k.Value != "invite" {
+		t.Fatalf("REGISTRATION view after PUT: %+v", k)
 	}
 	if k := knobOf(t, rec.Body.Bytes(), "CREATE_KEY"); !k.Set || k.Value != nil {
 		t.Fatalf("CREATE_KEY masked in view: %+v", k)
@@ -1864,6 +1879,107 @@ func TestAdminConfigRestartFlow(t *testing.T) {
 	time.Sleep(600 * time.Millisecond)
 	if calls != 1 {
 		t.Fatalf("restart hook fired %d times, want exactly 1", calls)
+	}
+}
+
+// ---- v0.12.1: exclusive paste-access + registration modes ----
+
+// old config files migrate: the legacy locked/createKey and
+// regOpen/userRegistration encodings resolve to the exclusive modes without
+// an admin visit, and a new-shape PUT clears the legacy fields it supersedes
+func TestAdminConfigMigration(t *testing.T) {
+	dir := t.TempDir()
+	// legacy: locked=true wins the stricter slot; the key stays set in the file
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"locked":true,"createKey":"old-key"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := build(dir, "")
+	if rec := get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"locked":true`) || strings.Contains(rec.Body.String(), `"enabled":true`) {
+		t.Fatalf("legacy locked file must migrate to members mode, gate off: %s", rec.Body)
+	}
+	s := testSession(t, dir)
+	cookie := sessionCookieFor(s)
+	rec := adminDo(h, "GET", "/api/admin/config", "", cookie)
+	if k := knobOf(t, rec.Body.Bytes(), "PASTE_ACCESS"); k.Value != "members" || k.Source != "file" {
+		t.Fatalf("legacy locked must echo as members/file: %+v", k)
+	}
+	if k := knobOf(t, rec.Body.Bytes(), "CREATE_KEY"); !k.Set {
+		t.Fatalf("legacy key must stay masked-set: %+v", k)
+	}
+
+	// legacy: regOpen=false migrates to invite; a new-shape PUT replaces it
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"regOpen":false,"locked":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h = build(dir, "")
+	rec = adminDo(h, "GET", "/api/admin/config", "", cookie)
+	if k := knobOf(t, rec.Body.Bytes(), "REGISTRATION"); k.Value != "invite" || k.Source != "file" {
+		t.Fatalf("legacy regOpen=false must echo as invite/file: %+v", k)
+	}
+	if k := knobOf(t, rec.Body.Bytes(), "PASTE_ACCESS"); k.Value != "open" {
+		t.Fatalf("legacy locked=false must echo as open: %+v", k)
+	}
+	if rec := adminDo(h, "PUT", "/api/admin/config", `{"pasteAccess":"open","registration":"open"}`, cookie); rec.Code != 200 {
+		t.Fatalf("PUT over legacy file: got %d %s", rec.Code, rec.Body)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.json"))
+	if strings.Contains(string(raw), `"regOpen"`) || strings.Contains(string(raw), `"locked"`) {
+		t.Fatalf("new-shape PUT must clear the legacy fields it supersedes: %s", raw)
+	}
+	if k := knobOf(t, adminDo(h, "GET", "/api/admin/config", "", cookie).Body.Bytes(), "REGISTRATION"); k.Value != "open" || k.Source != "file" {
+		t.Fatal("new registration field did not persist")
+	}
+}
+
+// the three paste-access modes are exclusive: open ignores a stale key,
+// passphrase gates by bearer, members by session
+func TestPasteAccessModes(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"pasteAccess":"passphrase","createKey":"mode-pass"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := build(dir, "")
+	if rec := get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"enabled":true`) || strings.Contains(rec.Body.String(), `"locked":true`) {
+		t.Fatalf("passphrase mode probe: %s", rec.Body)
+	}
+	body := fmt.Sprintf(`{"data":%q,"ttl":"1d"}`, fakePayload())
+	if rec := adminDo(h, "POST", "/api/paste", body, ""); rec.Code != 401 {
+		t.Fatalf("passphrase mode anon create: got %d, want 401", rec.Code)
+	}
+	req := httptest.NewRequest("POST", "/api/paste", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer mode-pass")
+	recOk := httptest.NewRecorder()
+	h.ServeHTTP(recOk, req)
+	if recOk.Code != 200 {
+		t.Fatalf("passphrase mode bearer create: got %d %s", recOk.Code, recOk.Body)
+	}
+
+	// members mode: the session is the only gate; a stale key must not demand a bearer
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"pasteAccess":"members","createKey":"stale-key"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h = build(dir, "")
+	if rec := get(h, "/api/gate"); strings.Contains(rec.Body.String(), `"enabled":true`) || !strings.Contains(rec.Body.String(), `"locked":true`) {
+		t.Fatalf("members mode probe: %s", rec.Body)
+	}
+	if rec := adminDo(h, "POST", "/api/paste", body, ""); rec.Code != 403 {
+		t.Fatalf("members mode anon create: got %d, want 403", rec.Code)
+	}
+	s := testSession(t, dir)
+	if rec := adminDo(h, "POST", "/api/paste", body, sessionCookieFor(s)); rec.Code != 200 {
+		t.Fatalf("members mode signed create: got %d %s", rec.Code, rec.Body)
+	}
+
+	// open mode with a stale key in the file: no gate at all
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"pasteAccess":"open","createKey":"stale-key"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h = build(dir, "")
+	if rec := get(h, "/api/gate"); strings.Contains(rec.Body.String(), `"enabled":true`) {
+		t.Fatalf("open mode must not enable the gate: %s", rec.Body)
+	}
+	if rec := adminDo(h, "POST", "/api/paste", body, ""); rec.Code != 200 {
+		t.Fatalf("open mode anon create: got %d %s", rec.Code, rec.Body)
 	}
 }
 
@@ -2065,31 +2181,31 @@ func TestLockedAdminPersistence(t *testing.T) {
 	h := build(dir, "")
 	cookie := sessionCookieFor(s)
 
-	// PUT locked=true via the admin API and verify the file layer reflects it
-	body := `{"locked":true}`
+	// PUT members mode via the admin API and verify the file layer reflects it
+	body := `{"pasteAccess":"members"}`
 	rec := adminDo(h, "PUT", "/api/admin/config", body, cookie)
 	if rec.Code != 200 {
-		t.Fatalf("locked put: got %d %s", rec.Code, rec.Body)
+		t.Fatalf("members put: got %d %s", rec.Code, rec.Body)
 	}
-	if k := knobOf(t, rec.Body.Bytes(), "LOCKED"); k.Source != "file" || k.Value != true {
-		t.Fatalf("locked knob must be file true after put: %+v", k)
+	if k := knobOf(t, rec.Body.Bytes(), "PASTE_ACCESS"); k.Source != "file" || k.Value != "members" {
+		t.Fatalf("paste access knob must be file members after put: %+v", k)
 	}
 
 	// A fresh boot must load the file layer and enforce the lock
 	h = build(dir, "")
 	if rec = get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"locked":true`) {
-		t.Fatalf("fresh boot must see file locked=true: %s", rec.Body)
+		t.Fatalf("fresh boot must see file members mode: %s", rec.Body)
 	}
 	if rec = adminDo(h, "POST", "/api/paste", fmt.Sprintf(`{"data":%q,"ttl":"1d"}`, fakePayload()), ""); rec.Code != 403 {
 		t.Fatalf("anon create must be locked after reboot: got %d", rec.Code)
 	}
 
-	// Clearing locked via UI (sending false) persists the unlock
-	if rec = adminDo(h, "PUT", "/api/admin/config", `{"locked":false}`, cookie); rec.Code != 200 {
-		t.Fatalf("locked=false put: got %d %s", rec.Code, rec.Body)
+	// Clearing the mode via UI persists the unlock
+	if rec = adminDo(h, "PUT", "/api/admin/config", `{"pasteAccess":"open"}`, cookie); rec.Code != 200 {
+		t.Fatalf("pasteAccess=open put: got %d %s", rec.Code, rec.Body)
 	}
 	h = build(dir, "")
 	if rec = get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"locked":false`) {
-		t.Fatalf("fresh boot must see file locked=false: %s", rec.Body)
+		t.Fatalf("fresh boot must see file open mode: %s", rec.Body)
 	}
 }
