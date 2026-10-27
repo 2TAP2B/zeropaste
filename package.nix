@@ -4,9 +4,10 @@
 }:
 
 # zeropaste in one derivation: single Go binary, embedded web/, stdlib only.
-buildGoModule {
+# rec: the -X main.version stamp interpolates the version attr in this set.
+buildGoModule rec {
   pname = "zeropaste";
-  version = "0.11.1";
+  version = "0.11.2";
   src = ./.;
   # real vendor hash: Go now has the go-webauthn dependency
   vendorHash = "sha256-9/wut8nmHfRSwoTUxf1YgdFqggGe+eh9YCzLLpFFaUU=";
