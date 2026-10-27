@@ -994,15 +994,24 @@ func TestAuthGateUpload(t *testing.T) {
 
 func testSession(t *testing.T, dir string) *sessions {
 	t.Helper()
+	s, _ := testAdmin(t, dir)
+	return s
+}
+
+// testAdmin stores the owner identity and returns its id (multi-identity tests
+// must not rely on ReadDir order)
+func testAdmin(t *testing.T, dir string) (*sessions, string) {
+	t.Helper()
 	s := newSessions(dir)
 	ident := identity{
-		ID:   newSessionID(),
-		Name: "friend-of-tobias",
+		ID:    newSessionID(),
+		Name:  "friend-of-tobias",
+		Admin: true, // the admin surface (config, invites) tests assume an owner session
 	}
 	if err := s.saveIdentity(&ident); err != nil {
 		t.Fatal(err)
 	}
-	return s
+	return s, ident.ID
 }
 
 func sessionCookieFor(s *sessions) string {
@@ -1015,6 +1024,11 @@ func sessionCookieFor(s *sessions) string {
 		}(),
 		Exp: time.Now().Add(time.Hour).Unix(),
 	})
+}
+
+// sessionCookieForID mints a cookie for a specific identity (multi-identity tests)
+func sessionCookieForID(s *sessions, id string) string {
+	return "zp.session=" + s.sign(sessionClaims{Sub: id, Exp: time.Now().Add(time.Hour).Unix()})
 }
 
 func TestMeEndpoint(t *testing.T) {
@@ -1980,6 +1994,188 @@ func TestPasteAccessModes(t *testing.T) {
 	}
 	if rec := adminDo(h, "POST", "/api/paste", body, ""); rec.Code != 200 {
 		t.Fatalf("open mode anon create: got %d %s", rec.Code, rec.Body)
+	}
+}
+
+// the admin surface is admin-only: a signed-in member WITHOUT the flag gets
+// 403 on the config, the identities list and invites, and /api/me carries the
+// flag so the client can hide the tab
+func TestAdminOnlySurface(t *testing.T) {
+	dir := t.TempDir()
+	s, ownerID := testAdmin(t, dir)
+	h := build(dir, "")
+
+	second := identity{ID: newSessionID(), Name: "friend-two"}
+	if err := s.saveIdentity(&second); err != nil {
+		t.Fatal(err)
+	}
+	member := sessionCookieForID(s, second.ID)
+
+	var me struct {
+		Admin bool `json:"admin"`
+		Name  string
+	}
+	json.Unmarshal(get(h, "/api/me").Body.Bytes(), &me) // anon: no admin key
+	json.Unmarshal(adminDo(h, "GET", "/api/me", "", member).Body.Bytes(), &me)
+	if me.Admin || me.Name != "friend-two" {
+		t.Fatalf("member me must be non-admin: %s", me.Name)
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", "/api/admin/config", ""},
+		{"PUT", "/api/admin/config", `{"maxTtlDays":10}`},
+		{"GET", "/api/admin/identities", ""},
+		{"PUT", "/api/admin/identities/" + second.ID, `{"admin":true}`},
+		{"POST", "/api/admin/invites", `{}`},
+	} {
+		if rec := adminDo(h, c.method, c.path, c.body, member); rec.Code != 403 {
+			t.Fatalf("member %s %s: got %d, want 403", c.method, c.path, rec.Code)
+		}
+	}
+	// the admin session still reaches everything
+	if rec := adminDo(h, "GET", "/api/admin/identities", "", sessionCookieForID(s, ownerID)); rec.Code != 200 {
+		t.Fatalf("admin identities list: got %d %s", rec.Code, rec.Body)
+	}
+}
+
+// promotion: the admin grants and revokes the flag; the last admin can never
+// be demoted, so the instance never loses its door
+func TestAdminPromoteDemote(t *testing.T) {
+	dir := t.TempDir()
+	s, ownerID := testAdmin(t, dir)
+	h := build(dir, "")
+	adminCookie := sessionCookieForID(s, ownerID)
+
+	second := identity{ID: newSessionID(), Name: "friend-two"}
+	if err := s.saveIdentity(&second); err != nil {
+		t.Fatal(err)
+	}
+	member := sessionCookieForID(s, second.ID)
+
+	// promote the member
+	rec := adminDo(h, "PUT", "/api/admin/identities/"+second.ID, `{"admin":true}`, adminCookie)
+	if rec.Code != 200 {
+		t.Fatalf("promote: got %d %s", rec.Code, rec.Body)
+	}
+	var me struct {
+		Admin bool `json:"admin"`
+	}
+	json.Unmarshal(adminDo(h, "GET", "/api/me", "", member).Body.Bytes(), &me)
+	if !me.Admin {
+		t.Fatal("promoted member must read admin:true on /api/me")
+	}
+
+	// demote again (owner remains) - then the last-admin guard applies
+	if rec := adminDo(h, "PUT", "/api/admin/identities/"+second.ID, `{"admin":false}`, adminCookie); rec.Code != 200 {
+		t.Fatalf("demote member: got %d %s", rec.Code, rec.Body)
+	}
+
+	// the last admin cannot be demoted (self-demotion lockout guard)
+	if rec := adminDo(h, "PUT", "/api/admin/identities/"+ownerID, `{"admin":false}`, adminCookie); rec.Code != 400 {
+		t.Fatalf("demote last admin: got %d, want 400", rec.Code)
+	}
+
+	// handover works once another admin exists
+	if rec := adminDo(h, "PUT", "/api/admin/identities/"+second.ID, `{"admin":true}`, adminCookie); rec.Code != 200 {
+		t.Fatalf("promote for handover: got %d %s", rec.Code, rec.Body)
+	}
+	if rec := adminDo(h, "PUT", "/api/admin/identities/"+ownerID, `{"admin":false}`, adminCookie); rec.Code != 200 {
+		t.Fatalf("handover demote: got %d %s", rec.Code, rec.Body)
+	}
+	// the demoted admin loses the surface
+	if rec := adminDo(h, "GET", "/api/admin/config", "", adminCookie); rec.Code != 403 {
+		t.Fatalf("demoted admin config: got %d, want 403", rec.Code)
+	}
+	// the new admin holds the door
+	if rec := adminDo(h, "GET", "/api/admin/config", "", member); rec.Code != 200 {
+		t.Fatalf("new admin config: got %d %s", rec.Code, rec.Body)
+	}
+
+	// abuse: unknown and malformed ids -> 404 (ServeMux path-cleaning answers
+	// dot-segment traversal with its own redirect before any handler runs)
+	for _, path := range []string{
+		"/api/admin/identities/AAAAAAAAAAAAAAAAAAAAAA", // 22 b64url chars, no such identity
+		"/api/admin/identities/bad!!id",                // not base64url
+		"/api/admin/identities/short",                  // not an identity id
+	} {
+		if rec := adminDo(h, "PUT", path, `{"admin":true}`, member); rec.Code != 404 {
+			t.Fatalf("promote %s: got %d, want 404", path, rec.Code)
+		}
+	}
+}
+
+// instances predating the admin field keep their door: the oldest identity
+// file is promoted at boot; ADMIN_ID names the admin explicitly and wins
+func TestAdminMigration(t *testing.T) {
+	dir := t.TempDir()
+	s := newSessions(dir)
+	first := identity{ID: newSessionID(), Name: "first-friend"}
+	second := identity{ID: newSessionID(), Name: "second-friend"}
+	if err := s.saveIdentity(&first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.saveIdentity(&second); err != nil {
+		t.Fatal(err)
+	}
+	// deterministic mtimes: the first file is the oldest
+	old := time.Now().Add(-48 * time.Hour)
+	for _, id := range []string{first.ID, second.ID} {
+		if err := os.Chtimes(filepath.Join(dir, "identities", id+".json"), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldSecond := time.Now().Add(-24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "identities", second.ID+".json"), oldSecond, oldSecond); err != nil {
+		t.Fatal(err)
+	}
+	build(dir, "")
+	var firstFlag struct {
+		Admin bool `json:"admin"`
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "identities", first.ID+".json"))
+	json.Unmarshal(b, &firstFlag)
+	if !firstFlag.Admin {
+		t.Fatal("oldest identity must be promoted to admin at boot")
+	}
+	b, _ = os.ReadFile(filepath.Join(dir, "identities", second.ID+".json"))
+	var secondFlag struct {
+		Admin bool `json:"admin"`
+	}
+	json.Unmarshal(b, &secondFlag)
+	if secondFlag.Admin {
+		t.Fatal("only the oldest identity may be promoted")
+	}
+
+	// ADMIN_ID overrides the mtime pick (idempotent when an admin exists)
+	t.Setenv("ADMIN_ID", second.ID)
+	h := build(dir, "")
+	b, _ = os.ReadFile(filepath.Join(dir, "identities", second.ID+".json"))
+	secondFlag = struct {
+		Admin bool `json:"admin"`
+	}{}
+	json.Unmarshal(b, &secondFlag)
+	if secondFlag.Admin {
+		t.Fatal("ADMIN_ID must not fire while an admin exists")
+	}
+	if rec := adminDo(h, "GET", "/api/admin/identities", "", sessionCookieForID(s, first.ID)); rec.Code != 200 {
+		t.Fatal("existing admin keeps the surface")
+	}
+
+	// a fresh store without any admin: ADMIN_ID promotes the named identity
+	dir2 := t.TempDir()
+	s2 := newSessions(dir2)
+	third := identity{ID: newSessionID(), Name: "named-admin"}
+	if err := s2.saveIdentity(&third); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ADMIN_ID", third.ID)
+	build(dir2, "")
+	b, _ = os.ReadFile(filepath.Join(dir2, "identities", third.ID+".json"))
+	thirdFlag := struct {
+		Admin bool `json:"admin"`
+	}{}
+	json.Unmarshal(b, &thirdFlag)
+	if !thirdFlag.Admin {
+		t.Fatal("ADMIN_ID must promote the named identity when no admin exists")
 	}
 }
 

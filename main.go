@@ -787,6 +787,7 @@ func build(dir, createKey string) http.Handler {
 	rl := newLimiter(30) // pastes per IP per minute
 	sess := newSessions(dir)
 	owns := newShareIndex(dir, sess)
+	ensureAdmin(sess) // first identity owns the box; legacy instances promote their oldest file
 	cer := newCeremony()
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", secure(hf(healthz)))
@@ -826,6 +827,8 @@ func build(dir, createKey string) http.Handler {
 		mux.Handle("GET /api/admin/config", secure(rl.guard(adminGet(createKey, sess))))
 		mux.Handle("PUT /api/admin/config", secure(rl.guard(adminPut(createKey, sess))))
 		mux.Handle("POST /api/admin/apply", secure(rl.guard(adminApply(sess))))
+		mux.Handle("GET /api/admin/identities", secure(adminIdentitiesList(sess)))
+		mux.Handle("PUT /api/admin/identities/{id}", secure(adminIdentityPromote(sess)))
 		// invites (v0.11): admin-minted registration links for locked instances
 		mux.Handle("POST /api/admin/invites", secure(rl.guard(adminInviteCreate(sess))))
 		mux.Handle("GET /api/admin/invites", secure(adminInvitesList(sess)))
@@ -931,12 +934,63 @@ func cfgView(bootKey string) map[string]any {
 
 func adminAuth(sess *sessions, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if sess.identFrom(r) == nil {
+		i := sess.identFrom(r)
+		if i == nil || !i.Admin {
 			httpError(w, 403, "admin needs an account")
 			return
 		}
 		next(w, r)
 	}
+}
+
+// ensureAdmin: the FIRST registered identity owns the instance. Identities
+// predating the admin field carry no flag - promote the oldest file so an
+// existing instance keeps its door; env ADMIN_ID names the admin explicitly
+// and wins the pick. // ponytail: file mtime is last-write, so a heavily
+// renamed identity can win the pick wrongly - the boot log names the
+// promoted identity, and server-file access can always fix the JSON.
+func ensureAdmin(sess *sessions) {
+	idents := listIdentities(filepath.Join(sess.dir, "identities"))
+	for _, i := range idents {
+		if i.Admin {
+			return
+		}
+	}
+	if want := strings.TrimSpace(os.Getenv("ADMIN_ID")); want != "" {
+		for _, i := range idents {
+			if i.ID == want {
+				i.Admin = true
+				if err := sess.saveIdentity(i); err != nil {
+					log.Print(err)
+					return
+				}
+				log.Printf("zeropaste: promoted %q to admin (ADMIN_ID)", i.Name)
+				return
+			}
+		}
+		log.Print("zeropaste: ADMIN_ID names no stored identity")
+		return
+	}
+	var oldest *identity
+	var oldestAt time.Time
+	for _, i := range idents {
+		fi, err := os.Stat(filepath.Join(sess.dir, "identities", i.ID+".json"))
+		if err != nil {
+			continue
+		}
+		if oldest == nil || fi.ModTime().Before(oldestAt) {
+			oldest, oldestAt = i, fi.ModTime()
+		}
+	}
+	if oldest == nil {
+		return // no identities yet: the first registration becomes admin
+	}
+	oldest.Admin = true
+	if err := sess.saveIdentity(oldest); err != nil {
+		log.Print(err)
+		return
+	}
+	log.Printf("zeropaste: no admin found - promoted %q (oldest identity); set ADMIN_ID to pick a different one", oldest.Name)
 }
 
 func adminGet(bootKey string, sess *sessions) http.HandlerFunc {
@@ -1062,6 +1116,68 @@ func adminPut(bootKey string, sess *sessions) http.HandlerFunc {
 
 // adminInviteCreate: POST {uses?} 1..100 (default 1) -> {token}; the
 // client builds location.origin + /#invite=<token>
+// ---- admin identities (v0.12.2): promote/demote in the config card ----
+
+// adminIdentitiesList: the config card's accounts section renders one
+// switch per stored identity (small friend-group store).
+func adminIdentitiesList(sess *sessions) http.HandlerFunc {
+	return adminAuth(sess, func(w http.ResponseWriter, _ *http.Request) {
+		idents := listIdentities(filepath.Join(sess.dir, "identities"))
+		rows := make([]map[string]any, 0, len(idents))
+		for _, i := range idents {
+			rows = append(rows, map[string]any{"id": i.ID, "name": i.Name, "admin": i.Admin})
+		}
+		respond(w, 200, map[string]any{"identities": rows})
+	})
+}
+
+// adminIdentityPromote: PUT {admin: bool}. Demoting the last admin is
+// rejected so the instance never loses its door; the demoted current user
+// re-syncs their tab bar via /api/me on the next poll.
+func adminIdentityPromote(sess *sessions) http.HandlerFunc {
+	return adminAuth(sess, func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		raw, err := base64.RawURLEncoding.DecodeString(id)
+		if err != nil || len(raw) != 16 { // identity ids are b64url of 16 bytes
+			http.NotFound(w, r)
+			return
+		}
+		target := loadIdentity(filepath.Join(sess.dir, "identities"), id)
+		if target == nil {
+			http.NotFound(w, r)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+		var q struct {
+			Admin bool `json:"admin"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+			httpError(w, 400, "invalid request body")
+			return
+		}
+		if target.Admin && !q.Admin {
+			others := false
+			for _, i := range listIdentities(filepath.Join(sess.dir, "identities")) {
+				if i.ID != target.ID && i.Admin {
+					others = true
+					break
+				}
+			}
+			if !others {
+				httpError(w, 400, "keep at least one admin")
+				return
+			}
+		}
+		target.Admin = q.Admin
+		if err := sess.saveIdentity(target); err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not store identity")
+			return
+		}
+		respond(w, 200, map[string]any{"id": target.ID, "name": target.Name, "admin": target.Admin})
+	})
+}
+
 func adminInviteCreate(sess *sessions) http.HandlerFunc {
 	return adminAuth(sess, func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
@@ -2024,6 +2140,7 @@ const sessionTTL = 30 * 24 * time.Hour
 type identity struct {
 	ID    string                `json:"id"` // b64url of 16 random bytes
 	Name  string                `json:"name,omitempty"`
+	Admin bool                  `json:"admin,omitempty"` // first registrant owns the instance; promote/demote via the config card
 	Creds []webauthn.Credential `json:"creds"`
 }
 
@@ -2187,7 +2304,7 @@ func me(s *sessions) http.HandlerFunc {
 		for _, c := range i.Creds {
 			ids = append(ids, base64.RawURLEncoding.EncodeToString(c.ID))
 		}
-		respond(w, 200, map[string]any{"name": i.Name, "id": i.ID, "accounts": accountsOn, "open": registrationOpen(n), "passkeys": ids})
+		respond(w, 200, map[string]any{"name": i.Name, "id": i.ID, "accounts": accountsOn, "open": registrationOpen(n), "admin": i.Admin, "passkeys": ids})
 	}
 }
 
@@ -2425,6 +2542,7 @@ func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFun
 			return
 		}
 		user.Creds = append(user.Creds, *cred)
+		user.Admin = s.identCount() == 0 // the first registrant owns the instance
 		if err := s.saveIdentity(user); err != nil {
 			log.Print(err)
 			httpError(w, 500, "could not store identity")

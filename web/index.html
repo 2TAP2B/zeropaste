@@ -19,9 +19,9 @@
 <link rel="icon" href="/assets/icon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.12.1" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.12.1" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.12.1">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.12.2" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.12.2" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.12.2">
 </head>
 <body>
 <main>
@@ -244,7 +244,7 @@
         <button type="button" class="dashtab active" data-tab="shares">shares</button>
         <button type="button" class="dashtab" data-tab="reverse">reverse</button>
         <button type="button" class="dashtab" data-tab="account">account</button>
-        <button type="button" class="dashtab" data-tab="config">config</button>
+        <button type="button" id="tabconfig" class="dashtab" data-tab="config">config</button>
         <a href="/" class="dashtab dashtab-new">new paste</a>
       </div>
     </div>
@@ -348,6 +348,8 @@
                 <span class="opttext"><b>invite links only</b><small>sign-up is closed - invite links below unlock registration for one friend each</small></span>
               </label>
             </div>
+            <div class="hint">admins - the first registered account owns the instance; promote friends here. The last admin can never be demoted.</div>
+            <div id="cfgadmins"></div>
             </div>
           <div class="cfgsection">
             <b>limits</b>
@@ -449,6 +451,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.12.1"></script>
+<script src="/assets/app.js?v=0.12.2"></script>
 </body>
 </html>

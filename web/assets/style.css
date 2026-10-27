@@ -265,6 +265,9 @@
   }
   .invrow code { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .invmeta { flex: 1 1 auto; text-align: right; color: var(--muted); font-size: .72rem; }
+  .cfgadmins { margin-top: .25rem; }
+  .cfgadmins .admname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; color: var(--text); }
+  .cfgadmins .switch { flex: 0 0 auto; }
   .cfgactions { margin-top: 1.1rem; justify-content: flex-end; }
   /* switch knob for the boolean knobs */
   .switch {

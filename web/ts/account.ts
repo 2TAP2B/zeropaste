@@ -11,6 +11,7 @@ interface MeRec {
   id?: string;
   accounts?: boolean; // false = this instance has USER_ACCOUNTS off
   open?: boolean;
+  admin?: boolean; // first registrant / promoted friends only
   passkeys?: string[]; // credential ids of the signed-in identity
 }
 
@@ -79,6 +80,7 @@ export async function refreshMe(): Promise<void> {
     const poll = $("accpoll") as HTMLElement;
 
     signedIn = !!me.name;
+    isAdmin = me.admin === true;
     document.dispatchEvent(new CustomEvent("zp:me")); // compose re-syncs the public slider (hidden while signed out)
     // USER_ACCOUNTS=false: the whole identity feature is off - the account
     // button and pane go away entirely (the /dash card adapts in loadDash)
@@ -340,6 +342,19 @@ export async function bootAccount(): Promise<void> {
 // (accounts only) - updated by refreshMe after every /api/me poll
 export let signedIn = false;
 
+// live binding: the config tab is admin-only - refreshMe keeps it in sync
+export let isAdmin = false;
+
+// the config tab hides for members without the flag; a persisted config tab
+// falls back to shares so nobody strands in a pane they cannot use
+function syncAdminTab(): void {
+  const tab = document.getElementById("tabconfig");
+  if (!tab) return;
+  tab.classList.toggle("hidden", !isAdmin);
+  const cur = document.querySelector("#dashtabs .dashtab.active") as HTMLElement | null;
+  if (!isAdmin && cur?.dataset.tab === "config") dashTab("shares");
+}
+
 // invite capability from the fragment: an admin-minted link lands as
 // /#invite=<token>; read once, stripped like paste keys (fragments never hit
 // server logs), then carried into the register/begin call
@@ -360,6 +375,8 @@ export function readInviteFragment(): void {
 function shareURL(r: ShareRow): string {
   return location.origin + "/p/" + r.id + (fragGet(r.id) ? "#" + fragGet(r.id) : "");
 }
+
+document.addEventListener("zp:me", syncAdminTab); // refreshMe re-syncs after promote/demote
 
 function dashTab(which: string): void {
   for (const b of document.querySelectorAll("#dashtabs .dashtab[data-tab]")) {
@@ -502,6 +519,57 @@ function cfgNote(msg: string): void {
   note.classList.toggle("hidden", msg === "");
 }
 
+// the admin list: one switch per stored identity; demoting the last admin
+// draws the server's 400 into #cfgerr and the switch snaps back
+interface AdminRow {
+  id: string;
+  name: string;
+  admin: boolean;
+}
+
+async function renderAdmins(): Promise<void> {
+  const box = $("cfgadmins") as HTMLElement;
+  box.textContent = "";
+  const res = await fetch("/api/admin/identities").catch(() => null);
+  if (!res?.ok) return;
+  const rows = ((await res.json()) as { identities: AdminRow[] }).identities;
+  for (const idn of rows) {
+    const row = document.createElement("div");
+    row.className = "invrow";
+    const name = document.createElement("span");
+    name.className = "admname";
+    name.textContent = idn.name || idn.id;
+    const sw = document.createElement("button");
+    sw.type = "button";
+    sw.className = "switch";
+    sw.setAttribute("role", "switch");
+    sw.setAttribute("aria-checked", String(idn.admin));
+    sw.setAttribute("aria-label", "admin: " + (idn.name || idn.id));
+    sw.addEventListener("click", () => {
+      sw.disabled = true;
+      void (async () => {
+        const res = await fetch("/api/admin/identities/" + idn.id, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ admin: !idn.admin }),
+        });
+        if (!res.ok) {
+          cfgError(await resErr(res, "change failed"));
+          sw.setAttribute("aria-checked", String(idn.admin)); // revert
+          sw.disabled = false;
+          return;
+        }
+        idn.admin = !idn.admin;
+        sw.setAttribute("aria-checked", String(idn.admin));
+        sw.disabled = false;
+        await refreshMe(); // a self-change flips the config tab visibility
+      })();
+    });
+    row.append(name, sw);
+    box.append(row);
+  }
+}
+
 // paint the form from the server view; the note line carries the only
 // operational state the admin needs: a saved-but-not-running draft
 function paintConfig(v: CfgView): void {
@@ -549,6 +617,7 @@ function wireConfig(): void {
     const res = await fetch("/api/admin/config").catch(() => null);
     if (res?.ok) {
       paintConfig((await res.json()) as CfgView);
+      void renderAdmins();
     } else {
       // non-admin session or server unreachable: keep the card header, drop
       // the form body so the error line below stays visible
@@ -918,6 +987,8 @@ async function loadDash(): Promise<void> {
   $("dashanon").classList.add("hidden");
   $("dashtabs").classList.remove("hidden");
   $("dashpanes").classList.remove("hidden");
+  isAdmin = me.admin === true;
+  syncAdminTab();
   void renderRshares().catch(() => {
     dashError("could not list reverse shares");
   });
