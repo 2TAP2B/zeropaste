@@ -329,7 +329,9 @@
   .unlockbox { text-align: center; padding: 1rem 0 .25rem; }
   .unlockbox .lockring { width: 3rem; height: 3rem; color: var(--accent); }
   .unlockbox b { display: block; margin-top: .9rem; color: var(--text); font-size: 1rem; }
-  .unlockbox p { font-size: .8rem; color: var(--muted); margin-top: .35rem; }
+  .unlockbox p { font-size: .8rem; color: var(--muted); margin-top: .35rem; max-width: 33rem; margin-left: auto; margin-right: auto; }
+  .unlockbox > .primary { margin: 1.1rem 0 0; }
+  .unlockbox > .primary + .hint { margin-top: .9rem; }
   .unlockrow { display: flex; gap: .6rem; margin-top: 1.4rem; text-align: left; }
   .unlockrow input { flex: 1 1 auto; }
   .unlockrow .primary { flex: 0 0 auto; }
