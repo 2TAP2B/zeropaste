@@ -1,0 +1,16 @@
+/* zeropaste brand: the purple accent the product uses, wired into the
+   rspress theme's CSS variables */
+:root {
+  --rp-c-brand: #8b5cf6; /* hsl(258deg 90% 66%) */
+  --rp-c-brand-dark: #7a44f5; /* hsl(258deg 90% 61%) */
+  --rp-c-brand-darker: #692cf3; /* hsl(258deg 90% 56%) */
+  --rp-c-brand-light: #ad8cf9; /* hsl(258deg 90% 76%) */
+  --rp-c-brand-lighter: #d0bdfb; /* hsl(258deg 90% 86%) */
+  --rp-c-brand-tint: rgba(139, 92, 246, 0.15);
+}
+
+/* the theme ships buttons without horizontal padding: text rides the
+   rounded edge - keep room on both sides */
+.rp-button {
+  padding: 0 1.25rem;
+}
