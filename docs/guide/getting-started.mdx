@@ -1,0 +1,78 @@
+# self-host in 30 seconds
+
+zeropaste is one Go binary. It stores ciphertext files on disk, serves your browser and needs nothing else - no database, no cache, no build step.
+
+## docker
+
+```bash
+docker run -d --name zeropaste -p 8080:8080 -v paste-data:/data ghcr.io/2tap2b/zeropaste:latest
+```
+
+Open `http://localhost:8080`. That is the whole deployment: the compose equivalent runs fully public as-pasted, and every knob ships as a commented line in `compose.yaml` - uncomment what you need, never commit a real key.
+
+```yaml
+services:
+  zeropaste:
+    image: ghcr.io/2tap2b/zeropaste:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - paste-data:/data
+    restart: unless-stopped
+    # environment:
+    #   - CREATE_KEY=change-me          # passphrase gate in front of pasting
+    #   - LOCKED=true                   # members only - passkey sign-in to paste
+    #   - MAX_TTL_DAYS=7                # ttl ceiling, 1..366
+    #   - MAX_SHARES_PER_ACCOUNT=50     # 0 = unlimited
+    #   - MAX_UPLOAD=104857600          # total ciphertext per bundle (bytes)
+    #   - CHUNK=8388608                 # per-request chunk size (bytes)
+    #   - PUBLIC_PASTES=false           # drop the plaintext public-paste slider
+    #   - USER_ACCOUNTS=false           # disable passkey accounts entirely
+    #   - USER_REGISTRATION=false       # closes sign-up after the first account
+    #   - REG_OPEN=false                # registration only via invite links
+
+volumes:
+  paste-data:
+```
+
+:::tip
+TLS is a reverse-proxy concern - the app stays plain HTTP so it works on LANs without certificates. See [reverse proxy](/guide/reverse-proxy).
+:::
+
+## nix
+
+A flake ships the package, the dev shell and a NixOS module:
+
+```nix
+services.zeropaste = {
+  enable = true;
+  listenAddress = "127.0.0.1:8080";
+};
+```
+
+The module runs with a `DynamicUser`, keeps state in `/var/lib/zeropaste` and sandbox-hardenes the unit. Secrets (the create-gate passphrase) come from an `EnvironmentFile`, never from the option system.
+
+```bash
+nix run github:2tap2b/zeropaste   # or use the dev shell: nix develop
+```
+
+## from source
+
+```bash
+go build -trimpath -ldflags="-s -w" -o zeropaste .
+./zeropaste -addr 127.0.0.1:8080 -data ./data
+```
+
+Flags: `-addr` (listen address, default `127.0.0.1:8080`) and `-data` (state directory, default `data`). Everything else is environment or the [admin config](/guide/configuration).
+
+## first steps after boot
+
+1. Open the site - the compose card is the whole first screen.
+2. Paste something, pick a ttl, hit **Encrypt & share**. The link contains the key in the fragment (`#...`) - share it, and it never leaves the URL bar.
+3. Sign up with a passkey (optional): the **first registered account owns the instance** - it gets the config tab, [invite links](/guide/accounts) and the admin surface. Everyone after that registers non-admin until promoted.
+
+## what runs inside
+
+- static shell + syntax highlighting + QR codes are embedded in the binary - no CDN calls from the frontend, ever.
+- the service worker caches only the static shell: offline boots render, paste traffic stays live.
+- a janitor deletes expired pastes every minute; the process never logs request IPs or content.

@@ -1,0 +1,77 @@
+# API reference
+
+All routes answer JSON errors as `{"error": "<generic message>"}` - never internal details. Base paths carry security headers; rate limit: 30 creates/min/IP.
+
+## pastes
+
+| method | path | auth | notes |
+| --- | --- | --- | --- |
+| `POST` | `/api/paste` | gate/members per mode | body: `{data, salt, ttl, hl, burn, public?, slug?}`; 256 KiB cap; success → `{"id"}` |
+| `GET` | `/api/paste/{id}` | public | → `{data, salt, hl, burn, expires, public}`; `no-store`; burn+random-key deletes on read |
+| `DELETE` | `/api/paste/{id}` | public | idempotent; removes text pastes and bundles |
+
+`id`: 8-16 chars, `[A-Za-z0-9_-]` - the sole path gate; anything else is a 404 before any file is touched.
+
+`data` must be strict base64url, 28 bytes minimum (12 IV + 16 GCM tag), 64 KiB max - unless `public: true` (account-only): raw UTF-8 stored verbatim, optional `slug` (8-16, unique, claimed exclusively; duplicate → 409).
+
+`ttl`: `1m`..`30 days` shapes (`10 min`, `6H`, `30 days`); the instance ceiling clamps.
+
+## uploads (chunked, resumable)
+
+| method | path | auth | notes |
+| --- | --- | --- | --- |
+| `POST` | `/api/uploads` | gate/members | `{len, ttl, salt?, burn?, public?, slug?}` → `{id, chunkSize, chunks}`; 1 KiB cap |
+| `PUT` | `/api/uploads/{id}/{n}` | gate | raw ciphertext chunk, exact size enforced (full = chunk, last = remainder); overwrite = resume; **not** rate limited |
+| `DELETE` | `/api/uploads/{id}` | public | idempotent abort, wipes the session |
+| `POST` | `/api/uploads/{id}/finish` | gate/members | verifies all parts, joins the blob; incomplete → 400 with parts kept |
+| `GET` | `/api/paste/{id}/blob?offset=N` | public | up to `CHUNK` bytes of ciphertext ranges; `no-store` |
+
+Slugged public sessions finish under the custom name; a repeat finish answers idempotently from a tombstone.
+
+## gate probe
+
+| method | path | auth | notes |
+| --- | --- | --- | --- |
+| `GET` | `/api/gate` | public | `{enabled, maxTtlDays, maxUpload, public, locked}` - the compose card adapts from this |
+| `POST` | `/api/gate` | rate limited | Bearer candidate → 204 or 401 |
+
+`enabled` = passphrase mode with a non-empty key; `locked` = members mode. Reader views never show the gate.
+
+## reverse shares
+
+| method | path | auth | notes |
+| --- | --- | --- | --- |
+| `POST` | `/api/rshare` | session | `{slug, ttl, maxSize, salt?, check?}` - slug globally unique (409), counts against the share cap |
+| `GET` | `/api/rshares` | session | the owner's live inboxes + arrivals |
+| `DELETE` | `/api/rshare/{slug}` | session | removes the inbox **and every registered paste** |
+| `GET` | `/api/rshare/{slug}` | public | `{maxSize, expires}` only - no inventory leak |
+| `POST` | `/api/rshare/{slug}/in` | public | `{id}` registers an existing paste; 403 over the cap; idempotent |
+
+## identity
+
+| method | path | auth | notes |
+| --- | --- | --- | --- |
+| `GET` | `/api/me` | public | `{name, id?, accounts, open, admin?, passkeys[]}` - empty name when anonymous |
+| `POST` | `/api/identity/register/begin` | rate limited | `{name, invite?}` → ceremony options |
+| `POST` | `/api/identity/register/finish` | rate limited | attestation; the FIRST registrant becomes admin |
+| `POST` | `/api/identity/login/begin` / `finish` | rate limited | discoverable passkey sign-in |
+| `POST` | `/api/identity/logout` | public | clears the cookie |
+
+## admin (admin session only)
+
+| method | path | notes |
+| --- | --- | --- |
+| `GET` | `/api/admin/config` | `{knobs[8], restartNeeded}` - `CREATE_KEY` masked to a `set` flag |
+| `PUT` | `/api/admin/config` | patch; all-or-nothing validation; persists only |
+| `POST` | `/api/admin/apply` | graceful drain + exit 0; double apply → 409 |
+| `GET` | `/api/admin/identities` | `{identities:[{id,name,admin}]}` |
+| `PUT` | `/api/admin/identities/{id}` | `{admin: bool}`; demote-last-admin → 400 |
+| `POST`/`GET`/`DELETE` | `/api/admin/invites[/{token}]` | mint (`{uses?}` 1..100) / list / revoke (idempotent) |
+
+## misc
+
+| method | path | notes |
+| --- | --- | --- |
+| `GET` | `/healthz` | `ok`; not rate limited, no auth |
+| `GET` | `/`, `/p/{any}` | the single-page shell, `no-store` |
+| `GET` | `/assets/{file}` | static shell, `max-age=86400`; `/assets/` itself → 404 |

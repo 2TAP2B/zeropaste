@@ -1,0 +1,33 @@
+---
+pageType: home
+hero:
+  name: zeropaste
+  tagline: zero-knowledge pastes
+  text: paste text, passwords, code or files - encrypted in your browser, readable only through the link. The server stores ciphertext and nothing else.
+  actions:
+    - theme: brand
+      text: self-host in 30 seconds
+      link: /guide/getting-started
+    - theme: alt
+      text: how the encryption works
+      link: /guide/shares
+features:
+  - title: encrypted in the browser
+    icon: 🔒
+    details: AES-256-GCM via WebCrypto. The key lives in the URL fragment or your head - it never reaches the server, the logs or the database (there is no database).
+  - title: shares that die
+    icon: ⏳
+    details: every paste carries a ttl from one minute to 30 days. Burn-after-reading deletes a paste the moment the first reader decrypts it.
+  - title: files, images, bundles
+    icon: 📎
+    details: drop files or clipboard-paste screenshots. Bundles upload in resumable chunks, show thumbnails and open in a lightbox - all encrypted like the text.
+  - title: reverse shares
+    icon: 📥
+    details: need something back? Create a drop link, friends upload through it, you collect the arrivals on your dashboard. Their content stays invisible to the server.
+  - title: passkey accounts
+    icon: 🔑
+    details: optional and local - a passkey unlocks your private dashboard of active shares. Anonymous pasting stays the default.
+  - title: one binary
+    icon: 🐹
+    details: a single Go binary, stdlib only, no database, no CDN calls. Runs anywhere from a scratch container to a Raspberry Pi.
+---

@@ -1,0 +1,43 @@
+# security posture
+
+The product is a threat model made code. This page states what zeropaste protects, what it deliberately does not, and where the ceilings are.
+
+## what the server cannot know
+
+- **content** - AES-256-GCM ciphertext only; keys live in URL fragments or user heads (or nowhere, for plaintext lanes you opted into).
+- **filenames** in bundles - the manifest is encrypted with the share key.
+- **passphrases** - the server stores a random salt; the key derivation happens in the browser (PBKDF2-HMAC-SHA256, 600k iterations).
+- **who you are** - no request logs, no IP storage, anonymous by default; the rate limiter counts per window in memory and forgets.
+
+## trust boundaries
+
+| layer | guarantee |
+| --- | --- |
+| transport | app serves HTTP; TLS + HSTS are the proxy's job |
+| validation | every boundary: ttl shape, length caps, strict base64url, `validID` charset (the sole path-traversal gate), `MaxBytesReader` everywhere |
+| CSRF | blocked by construction - state-changing endpoints require JSON/bearer bodies; no CORS headers are ever emitted |
+| cookies | HttpOnly, SameSite=Lax, `Secure` on HTTPS; bounded MaxAge; HMAC-signed, secret in `data/.session.key` |
+| headers | `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, strict CSP with `blob:` only for decrypted previews |
+
+## supply chain
+
+- one direct Go module (go-webauthn); everything else is stdlib.
+- `govulncheck ./...` runs in the release gate; findings are triaged against reachability and recorded.
+- shipped toolchains track the patched Go release (the eMudhra intermediate distrust, CVE-2026-111943, landed in the 1.26.10/1.27.3 lines).
+
+## the deliberate ceilings
+
+Marked `// ponytail:` in the code - weaker-but-fine behavior for a friend-group tool, preserved on purpose:
+
+- two racing burn-after-reading readers can both succeed (read-then-delete is not atomic).
+- pending webauthn ceremonies live in memory (2 min) - a restart drops them; multi-instance deployments share nothing.
+- a heavily renamed legacy identity can win the oldest-file admin migration; the boot log names the pick.
+- bundle encryption is in-memory: ~2 GiB is the practical bundle ceiling.
+
+## what the app embeds
+
+Everything the frontend needs ships inside the binary: the UI, syntax highlighting, QR codes, icons. **No CDN calls from the frontend** - a self-hosted instance never talks to third parties when you paste.
+
+## reporting
+
+Open a GitHub issue for anything reachable - or a private security advisory for the zero-knowledge contract itself.

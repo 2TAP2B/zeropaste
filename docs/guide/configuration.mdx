@@ -1,0 +1,67 @@
+# configuration
+
+Three layers, resolved once at boot: **config file > process env > built-in default**. The admin UI writes the file (`data/config.json`); env stays useful for compose deployments and first boot.
+
+## the admin config
+
+The dashboard's config tab manages the whole instance; a save lands in `data/config.json` (mode 0600) and goes live after **Save + reboot** (a graceful drain, then the deployment's restart policy brings the process back with the new layer). Knobs are boot-frozen on purpose: a mid-life chunk shrink would strand in-flight uploads.
+
+### who can paste (exclusive choice)
+
+| mode | effect |
+| --- | --- |
+| `anyone` | visitors paste right away |
+| `passphrase` | the compose lane sits behind a shared passphrase (the create-gate); the key is stored server-side as a secret, shown only as *set* |
+| `members` | pasting needs a passkey sign-in; reads stay open |
+
+The passphrase mode requires a key; switching modes hides the key field, and the running process enforces exactly one gate.
+
+### accounts (exclusive choice)
+
+| mode | effect |
+| --- | --- |
+| `open` | anyone can register |
+| `first` | closes after the first account (first-user bootstrap) |
+| `invite` | closed; [invite links](/guide/accounts) unlock registration |
+
+### allow plaintext public pastes
+
+Switch. Off (the default is on) drops the plaintext-lane slider from compose; public creation is always account-only regardless.
+
+### limits
+
+| knob | default | range |
+| --- | --- | --- |
+| max ttl (days) | 30 | 1..366 |
+| max shares per account | 0 = unlimited | 0..100000 |
+| max upload (bytes) | 104857600 (100 MiB) | 1 MiB..64 GiB |
+| chunk size (bytes) | 8388608 (8 MiB) | 64 KiB..64 MiB |
+
+Cross-checked: chunk ≤ max upload, enforced on the merged next-boot pair.
+
+## environment variables
+
+Env vars keep working as first-boot layers - after one admin save the file owns a knob until the file is deleted.
+
+| env | default | meaning |
+| --- | --- | --- |
+| `CREATE_KEY` | unset | enables the passphrase gate (its presence is the switch) |
+| `LOCKED` | `false` | members-only compose lane |
+| `PASTE_ACCESS` | - | file knob (`anyone` / `passphrase` / `members`) beats the two above |
+| `REG_OPEN` | `true` | `false` closes registration to invite links |
+| `USER_REGISTRATION` | `true` | `false` closes sign-up after the first account |
+| `REGISTRATION` | - | file knob (`open` / `first` / `invite`) beats the two above |
+| `PUBLIC_PASTES` | `true` | plaintext public-paste lane |
+| `USER_ACCOUNTS` | `true` | `false` disables the entire identity subsystem (config tab included - it must not hide its own door) |
+| `MAX_TTL_DAYS` | `30` | ttl ceiling, 1..366 |
+| `MAX_SHARES_PER_ACCOUNT` | `0` | per-identity active share cap |
+| `MAX_UPLOAD` | `104857600` | total ciphertext per bundle |
+| `CHUNK` | `8388608` | per-request chunk |
+| `SESSION_SECRET` | auto | HMAC secret for session cookies (else `data/.session.key`, auto-generated) |
+| `ADMIN_ID` | auto | names the admin identity id explicitly for the boot migration |
+
+## precedence details
+
+- A config file with legacy fields (`locked`, `createKey`, `regOpen`, `userRegistration`) migrates to the exclusive modes automatically - each legacy field still beats its own env, and the stricter mode wins the choice.
+- The running process never adopts a saved knob live: **Save + reboot** is the application path, `restartNeeded` in the view tells you when a draft differs from what runs.
+- A corrupt config file fails the boot loudly - it is UI-written, so silence would be a bug.

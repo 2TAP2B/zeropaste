@@ -2,5 +2,7 @@ paste
 result
 result-*
 data/
+doc_build/
+node_modules/
 *.log
 .direnv/

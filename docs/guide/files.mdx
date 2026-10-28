@@ -1,0 +1,35 @@
+# files and images
+
+The compose card takes text and files side by side: drag and drop, click to browse, or paste an image straight from the clipboard.
+
+## bundles
+
+Files travel as an encrypted **bundle**:
+
+- one key per share (random or derived from your passphrase), a fresh IV per blob;
+- a manifest (filenames, mime types, sizes, thumbnails) is encrypted alongside the files - **the server never learns a filename**;
+- everything rides the same `/p/<id>` link as a text paste; readers see the note plus a file list.
+
+The practical ceiling is ~2 GiB (the browser encrypts in memory).
+
+## chunked, resumable upload
+
+Large bundles leave the browser in chunks (default **8 MiB** per request):
+
+- the upload session survives a lost connection - re-PUT a chunk to resume;
+- the sender can cancel mid-flight; the temp session is deleted;
+- a session that never finishes is swept after 2 hours;
+- readers download ranges on demand - a 100 MiB bundle only moves the chunks you open.
+
+## image previews
+
+Decodable images get a thumbnail encrypted next to the file: the card shows the small thumbnail first and decrypts the full image only when you open the lightbox or hit **Save**. Old bundles without thumbnails fall back to eager decryption for small images.
+
+## limits
+
+| knob | env | default |
+| --- | --- | --- |
+| total ciphertext per bundle | `MAX_UPLOAD` | 100 MiB (up to 64 GiB) |
+| per-request chunk | `CHUNK` | 8 MiB (64 KiB..64 MiB) |
+
+`CHUNK` must stay at or below `MAX_UPLOAD` - the server refuses to boot otherwise. Both are editable in the [admin config](/guide/configuration) after a save + reboot.

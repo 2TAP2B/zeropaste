@@ -1,0 +1,52 @@
+# accounts and administration
+
+Accounts are optional: anonymous pasting is the default and needs no cookie, no session, no tracking. But a passkey unlocks a private dashboard - and on locked instances it is the door.
+
+## passkeys
+
+- Registration and sign-in run over **WebAuthn** (the one third-party Go module in the codebase).
+- Sessions are HMAC-signed cookies (`zp.session`), HttpOnly, SameSite=Lax, 30 days.
+- Passkeys need a **domain**: IP-literal hosts (`http://192.168.1.10:8080`) cannot hold them - open the site over its hostname. The browser pane tells you exactly that.
+- Sign-ins are discoverable: pick your passkey, no username needed.
+
+## the dashboard
+
+`/dash` (sign in via the header's account button) shows:
+
+- **shares** - every active paste you created, with kind, views, expiry/burn and copy/delete;
+- **reverse** - your drop-link inboxes and arrivals ([see reverse shares](/guide/reverse-shares));
+- **account** - display name and passkey management;
+- **config** - the admin surface (below).
+
+## admin rights
+
+- The **first registered account owns the instance**: it gets the admin flag and the config tab.
+- The admin promotes friends in the config card's ACCOUNTS section - one switch per identity. Demoting the **last** admin is refused, so the instance never loses its door.
+- Owner transfer = promote a friend, then demote yourself.
+- Existing instances that predate the flag migrate at boot: with no admin found, the **oldest identity** is promoted (the boot log names it); `ADMIN_ID=<identity id>` picks explicitly instead.
+
+:::note
+The real emergency hatch is the same as always: anyone with access to the server can edit `data/identities/<id>.json` directly. That is root anyway.
+:::
+
+## invites
+
+When registration is closed or the instance is locked, invite links let a friend in anyway:
+
+1. In the config card's INVITES section, mint a link (single- or multi-use).
+2. The friend opens `https://your.site/#invite=<token>` once - the token sticks in their tab.
+3. They register their passkey; the link dies after its last use or when you revoke it.
+
+Invite tokens are validated at the start and the end of the ceremony; abandoned ceremonies never burn a use.
+
+## locking the instance down
+
+The config card's **who can paste** choice (or the env vars on first boot) gives three exclusive postures:
+
+| mode | compose | reads | who registers |
+| --- | --- | --- | --- |
+| **anyone** | open | open | per the accounts choice |
+| **gate passphrase** | unlock screen first | open | per the accounts choice |
+| **members only** | passkey sign-in required | open | per the accounts choice |
+
+Reads **never** lock: a share link decrypts for anyone who has it, with or without an account. Burn-after-reading deletes still work for anonymous readers - the zero-knowledge contract does not depend on accounts.

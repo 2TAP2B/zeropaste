@@ -1,6 +1,11 @@
 data/
 paste
 *.md
+docs/
+doc_build/
+package.json
+package-lock.json
+node_modules/
 .envrc
 flake.nix
 flake.lock

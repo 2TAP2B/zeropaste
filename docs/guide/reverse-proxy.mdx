@@ -1,0 +1,52 @@
+# reverse proxy
+
+zeropaste serves plain HTTP by design - TLS termination, HSTS and certificates belong to the proxy in front. The app keeps working on LANs without a certificate.
+
+## what the proxy should do
+
+- terminate TLS and set **HSTS** (the app deliberately does not);
+- keep the `Host` header intact - the app derives request-scoped RP IDs and share URLs from it;
+- no special headers required. The rate limiter reads the **last** `X-Forwarded-For` entry (your proxy appends the real client IP; spoofed earlier entries only pollute the visitor's own chain). Cookies flip to `Secure` automatically on HTTPS requests, direct or proxied.
+
+## caddy
+
+```
+paste.example.org {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Caddy sets HSTS off by default; add `header Strict-Transport-Security "max-age=31536000"` if you want it.
+
+## nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name paste.example.org;
+
+    ssl_certificate     /etc/letsencrypt/live/paste.example.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/paste.example.org/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+}
+```
+
+:::note
+Do not forward WebSocket headers you do not need - there are none. The app is request/response HTTP with standard timeouts (read 30s, write 30s, idle 120s).
+:::
+
+## passkeys behind a proxy
+
+WebAuthn binds to the **RP ID** = the request host (no port). Behind a domain proxy this just works; on `http://localhost` it works too; on an IP literal (`http://192.168.1.10:8080`) passkeys are rejected by design - open the site over a hostname. The app allows both scheme variants of the host, so a proxy that skips `X-Forwarded-Proto` still yields a working ceremony.
+
+## health check
+
+`GET /healthz` answers `200 ok` - not rate limited, no auth. Point your load balancer or container healthcheck at it.

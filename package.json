@@ -1,0 +1,14 @@
+{
+  "name": "zeropaste-docs",
+  "private": true,
+  "type": "module",
+  "description": "documentation site for zeropaste (rspress); the Go binary lives in main.go",
+  "devDependencies": {
+    "@rspress/core": "2.0.23"
+  },
+  "scripts": {
+    "docs:dev": "rspress dev",
+    "docs:build": "rspress build",
+    "docs:preview": "rspress preview"
+  }
+}
