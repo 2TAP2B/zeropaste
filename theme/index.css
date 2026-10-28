@@ -9,8 +9,17 @@
   --rp-c-brand-tint: rgba(139, 92, 246, 0.15);
 }
 
-/* the theme ships buttons without horizontal padding: text rides the
+/* the theme ships buttons without horizontal padding: text rode the
    rounded edge - keep room on both sides */
 .rp-button {
   padding: 0 1.25rem;
+}
+
+/* landing background: flat surface with one faint brand glow at the top -
+   replaces the default blue radial stack */
+:root {
+  --rp-home-background-bg:
+    radial-gradient(60% 44% at 50% 0%, var(--rp-c-brand-tint) 0%, transparent 72%),
+    var(--rp-c-bg);
+  --rp-home-feature-bg: var(--rp-c-bg);
 }
