@@ -12,10 +12,11 @@ export function humanSize(n: number): string {
   return (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) + " " + units[u - 1];
 }
 
-export function show(id: "gate" | "lockcard" | "compose" | "linkbox" | "read"): void {
-  for (const s of ["gate", "lockcard", "compose", "linkbox", "read"]) {
+export function show(id: "gate" | "lockcard" | "compose" | "linkbox" | "read" | "welcome"): void {
+  for (const s of ["gate", "lockcard", "compose", "linkbox", "read", "welcome"]) {
     $(s).classList.toggle("hidden", s !== id);
   }
+  $("dashroot").classList.add("hidden"); // the tour can run on /dash too
   window.scrollTo(0, 0);
 }
 

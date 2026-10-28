@@ -2407,18 +2407,19 @@ func (c *ceremony) getLog(id string) (webauthn.SessionData, bool) {
 // proxy in front may or may not forward X-Forwarded-Proto; the RPID pin is
 // what protects the ceremony, not the scheme string.
 func rpFromRequest(r *http.Request) *webauthn.WebAuthn {
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
+	originHost := r.Host // origins carry the port when non-default - the browser's Origin header does too
+	rpID := originHost
+	if h, _, err := net.SplitHostPort(originHost); err == nil {
+		rpID = h // the RP ID never carries a port
 	}
 	w, err := webauthn.New(&webauthn.Config{
-		RPID:          host,
+		RPID:          rpID,
 		RPDisplayName: "zeropaste",
-		RPOrigins:     []string{"https://" + host, "http://" + host},
+		RPOrigins:     []string{"https://" + originHost, "http://" + originHost},
 	})
 	if err != nil {
 		// the lib rejects IP-literal RP IDs ("not a domain"); surface why in the log
-		log.Print("webauthn config rejected for host ", host, ": ", err)
+		log.Print("webauthn config rejected for host ", rpID, ": ", err)
 		return nil
 	}
 	return w

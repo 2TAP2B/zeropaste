@@ -19,9 +19,9 @@
 <link rel="icon" href="/assets/icon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.12.2" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.12.2" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.12.2">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.12.3" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.12.3" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.12.3">
 </head>
 <body>
 <main>
@@ -94,6 +94,21 @@
       <p>Pasting needs an account with a passkey. Reading stays open: anyone with a share link can still decrypt it in their browser.</p>
       <button type="button" class="primary" id="locksignin">Sign in with passkey</button>
       <p class="hint">Arrived with an invite link? It unlocks registration - the site remembers the invite after you open it once.</p>
+    </div>
+  </section>
+
+  <!-- welcome: a fresh registration gets a one-time tour (localStorage zp.tour) -->
+  <section id="welcome" class="card hidden">
+    <div class="unlockbox">
+      <svg class="lockring" id="welico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" ry="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+      <b id="weltitle">hey, welcome to zeropaste</b>
+      <p id="weltext">everything you share is encrypted in your browser - the server stores ciphertext only.</p>
+      <div id="weldots" class="weldots hidden"></div>
+      <div class="accrow" id="welactions">
+        <button type="button" id="welback" class="hidden">back</button>
+        <button type="button" id="welskip">skip tour</button>
+        <button type="button" class="primary" id="welnext">take a tour</button>
+      </div>
     </div>
   </section>
 
@@ -451,6 +466,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.12.2"></script>
+<script src="/assets/app.js?v=0.12.3"></script>
 </body>
 </html>

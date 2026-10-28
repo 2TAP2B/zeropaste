@@ -1,4 +1,5 @@
 import { $ } from "./dom";
+import { showWelcome, tourSeen } from "./tour";
 import { b64uFromBytes, bytesFromB64u, deriveKey, seal } from "./crypto";
 import { humanSize, copy } from "./ui";
 
@@ -241,7 +242,7 @@ function arrayB64u(v: ArrayBuffer | Uint8Array): string {
   return b64uFromBytes(new Uint8Array(v));
 }
 
-export async function registerStart(): Promise<void> {
+export async function registerStart(): Promise<boolean> {
   ($("accerr") as HTMLElement).classList.add("hidden");
   try {
     const name = ($("accname") as HTMLInputElement).value;
@@ -266,8 +267,10 @@ export async function registerStart(): Promise<void> {
     ($("accerr") as HTMLElement).classList.add("hidden");
     inviteToken = ""; // burned with the account creation
     await refreshMe();
+    return true;
   } catch (e) {
     accError(e instanceof Error ? e.message : "registration failed");
+    return false;
   }
 }
 
@@ -305,7 +308,15 @@ export async function logout(): Promise<void> {
 }
 
 export async function bootAccount(): Promise<void> {
-  $("regbtn").addEventListener("click", () => void registerStart());
+  // fresh registration (signed-out → account): one-time welcome tour; the
+  // attach button (signed-in) skips it - an existing account needs no tour
+  $("regbtn").addEventListener("click", () => {
+    void registerStart().then((ok) => {
+      if (!ok || tourSeen()) return;
+      (document.getElementById("accpanel") as HTMLDivElement).hidePopover();
+      showWelcome();
+    });
+  });
   $("attachbtn").addEventListener("click", () => void registerStart()); // signed-in: attach another key
   // signing in from the lightbox: straight to the dashboard, no lingering panel
   $("loginbtn").addEventListener("click", () => {
@@ -392,6 +403,17 @@ function dashTab(which: string): void {
   }
 }
 
+// tour exit: /dash re-enters in place (listeners are already bound), any
+// other page navigates there
+export async function returnToDash(): Promise<void> {
+  if (location.pathname !== "/dash") {
+    location.assign("/dash");
+    return;
+  }
+  $("dashroot").classList.remove("hidden");
+  await loadDash();
+}
+
 export async function dashboardPage(): Promise<void> {
   $("gate").classList.add("hidden");
   $("compose").classList.add("hidden");
@@ -416,7 +438,12 @@ export async function dashboardPage(): Promise<void> {
   $("dashreg").addEventListener("click", () => {
     (document.getElementById("dashreg") as HTMLButtonElement).disabled = true;
     registerStart()
-      .then(() => void loadDash())
+      .then((ok) => {
+        // the accpanel (and its #accerr) is closed on /dash - mirror the failure
+        if (!ok) return void dashError("registration failed - check the passkey dialog and try again");
+        if (tourSeen()) return void loadDash();
+        showWelcome(); // tour exit routes back into the dashboard
+      })
       .catch((e) => dashError(e instanceof Error ? e.message : "failed"));
   });
   $("dashlogin").addEventListener("click", () => {

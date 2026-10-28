@@ -5,8 +5,11 @@ import { initTheme } from "./theme";
 import { readView } from "./read";
 import { uploadBundle, abortUpload, UploadAborted, setClientMaxUpload } from "./uploads";
 import { selfcheck } from "./selfcheck";
-import { bootAccount, stashForCreate, dashboardPage, signedIn, readInviteFragment } from "./account";
+import { bootAccount, stashForCreate, dashboardPage, signedIn, readInviteFragment, returnToDash } from "./account";
 import { reverseView } from "./reverse";
+import { wireWelcome } from "./tour";
+
+wireWelcome(returnToDash);
 
 // pwa: the worker caches the static shell only (same origin, never /api/*),
 // giving installed-app offline boots; paste traffic always stays live

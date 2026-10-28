@@ -357,6 +357,11 @@
   .unlockrow { display: flex; gap: .6rem; margin-top: 1.4rem; text-align: left; }
   .unlockrow input { flex: 1 1 auto; }
   .unlockrow .primary { flex: 0 0 auto; }
+  /* welcome tour: centered actions, progress dots */
+  #welactions { justify-content: center; margin-top: 1.1rem; }
+  .weldots { display: flex; gap: .35rem; justify-content: center; margin: .9rem 0 .35rem; }
+  .weldots span { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+  .weldots span.on { background: var(--accent); }
   .readerror { text-align: center; padding: 2.25rem .5rem; color: var(--muted); }
   .readerror svg { width: 2.2rem; height: 2.2rem; color: var(--danger); opacity: .85; }
   .readerror b { display: block; margin: .9rem 0 .35rem; color: var(--text); font-size: 1rem; }
