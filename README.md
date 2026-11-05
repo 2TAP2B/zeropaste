@@ -9,6 +9,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license MIT"></a>
   <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="go 1.26">
   <a href="https://github.com/2TAP2B/zeropaste/actions/workflows/docker.yml"><img src="https://github.com/2TAP2B/zeropaste/actions/workflows/docker.yml/badge.svg" alt="docker build"></a>
+  <a href="https://2tap2b.github.io/zeropaste/"><img src="https://img.shields.io/badge/docs-2tap2b.github.io%2Fzeropaste-905cf6" alt="documentation"></a>
+</p>
+
+<p align="center">
+  <a href="https://2tap2b.github.io/zeropaste/"><b>📖 Official documentation</b></a> — setup guide, configuration reference, security posture and the full API.
 </p>
 
 Self-hosted, zero-knowledge paste sharing in a single Go binary: the browser encrypts your paste with AES-256-GCM before it ever hits the wire, and the decryption key rides in the URL fragment, which browsers never send anywhere. Everything is anonymous by default - no sign-up, no cookies, no request logs - with optional passkey accounts for a private dashboard of your active shares.
@@ -53,7 +58,7 @@ services:
     volumes:
       - paste-data:/data
     restart: unless-stopped
-    # environment:                 # all optional
+    # environment:                 # all optional, full list in the docs
     #   CREATE_KEY: "change-me"       # site passphrase in front of creates
     #   USER_ACCOUNTS: "true"         # "false" disables accounts entirely
     #   USER_REGISTRATION: "true"     # "false": sign-up closes after the first account
@@ -63,7 +68,7 @@ volumes:
   paste-data:
 ```
 
-The app UI carries the same two blocks - footer → **self-host in 30 seconds**.
+The app UI carries the same two blocks - footer → **self-host in 30 seconds**. The full deployment guide (reverse proxy setup, first steps after boot, the admin config UI) lives in the [getting started page](https://2tap2b.github.io/zeropaste/guide/getting-started).
 
 ### NixOS
 
@@ -102,7 +107,7 @@ go build -trimpath -ldflags="-s -w" -o paste .
 ./paste                     # http://127.0.0.1:8080
 ```
 
-Production: the app speaks plain HTTP and is proxy-agnostic. Put any TLS-capable reverse proxy in front; HSTS belongs there, not in the app. The rate limiter reads the last `X-Forwarded-For` entry, which is what a typical proxy appends. Shares links are built in the browser from the address you opened, so there is no base-URL config and never will be.
+Production: the app speaks plain HTTP and is proxy-agnostic. Put any TLS-capable reverse proxy in front; HSTS belongs there, not in the app. The rate limiter reads the last `X-Forwarded-For` entry, which is what a typical proxy appends. Shares links are built in the browser from the address you opened, so there is no base-URL config and never will be. Ready-made configs are in the [reverse proxy guide](https://2tap2b.github.io/zeropaste/guide/reverse-proxy).
 
 ## Configuration
 
@@ -118,7 +123,11 @@ Every value is optional; unset means the default. Set them via `environment:` in
 | `MAX_SHARES_PER_ACCOUNT` | `0` (unlimited) | cap on active shares per account; beyond it creations answer `403 share limit reached`. |
 | `MAX_UPLOAD` | `104857600` (100 MiB) | total ciphertext per file bundle (1 MiB–64 GiB). The "maximum upload size" knob. |
 | `CHUNK` | `8388608` (8 MiB) | bytes per upload/range chunk (64 KiB–64 MiB). |
+| `LOCKED` | `false` | `true` closes pasting to anonymous visitors - reading (and burns) stay open; mint invite links to let friends register. |
+| `PUBLIC_PASTES` | `true` | `false` hides the plaintext public-paste slider; public creation is accounts-only either way. |
 | `SESSION_SECRET` | auto-generated | HMAC key for account session cookies; set it when the data dir does not persist it. |
+
+That covers boot-time env. After the first account exists, the same knobs move into the dashboard's admin config tab (persisted in `data/config.json`, applied at next boot) - the full walkthrough is in the [configuration reference](https://2tap2b.github.io/zeropaste/guide/configuration).
 
 ## How it works
 
@@ -130,6 +139,12 @@ Burn: for random-key pastes the server deletes the file right after the first fe
 
 File bundles: the client frames everything into one server-opaque envelope - `manifestCt ‖ file cts ‖ thumb cts`, all encrypted with one AES-GCM key per share. The manifest (names, MIME types, note text) never leaves the browser; the server sees only block lengths and an expiry.
 
+The [documentation home page](https://2tap2b.github.io/zeropaste/) walks through the same story with the live UI; the [files and images guide](https://2tap2b.github.io/zeropaste/guide/files) covers bundles and chunked uploads.
+
+## API
+
+The binary is small but the surface is real: pastes, chunked uploads, reverse shares, identity and the admin endpoints. The full route reference with request/response shapes and auth requirements lives in the [API reference](https://2tap2b.github.io/zeropaste/api/reference).
+
 ## Security model
 
 - Keys exist only in the browser; the server cannot read any paste, compromised or subpoenaed
@@ -140,7 +155,7 @@ File bundles: the client frames everything into one server-opaque envelope - `ma
 - Advanced: strict CSP (`default-src 'self'; img-src 'self' blob:`), `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, body caps, per-IP fixed-window limiter, constant-time key comparison
 - Paste rendering uses `textContent` only - `innerHTML` with paste content does not exist
 
-For full details, read [AGENTS.md](AGENTS.md) - the complete spec.
+The [security guide](https://2tap2b.github.io/zeropaste/guide/security) covers the same points with more depth - threat model, what the server stores, and the deliberate ceilings. For the complete engineering spec (storage layout, envelope framing, admin config), read [AGENTS.md](AGENTS.md).
 
 ## Contributing
 
