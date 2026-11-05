@@ -87,6 +87,7 @@ function renderChips(): void {
   ($("text") as HTMLTextAreaElement).placeholder = picked.length
     ? "Optional note - shown above the files"
     : "Type or paste anything - text, passwords, snippets…";
+  validateReady(); // picked just changed (add via drop/browse/clipboard-paste, or chip removal) - resubmit state
 }
 
 dropzone.addEventListener("click", () => fileinput.click());
