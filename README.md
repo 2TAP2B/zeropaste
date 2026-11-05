@@ -13,7 +13,9 @@
 </p>
 
 <p align="center">
-  <a href="https://2tap2b.github.io/zeropaste/"><b>docs</b></a> - setup guide, configuration reference, security posture and the full API · <a href="https://zero.sohn.uk/"><b>demo</b></a> - try the live instance
+  <a href="https://2tap2b.github.io/zeropaste/"><b>docs</b></a> - setup guide, configuration reference, security posture and the full API 
+  <p></p>
+  <a href="https://zero.sohn.uk/"><b>demo</b></a> - try the live instance
 </p>
 
 Self-hosted, zero-knowledge paste sharing in a single Go binary: the browser encrypts your paste with AES-256-GCM before it ever hits the wire, and the decryption key rides in the URL fragment, which browsers never send anywhere. Everything is anonymous by default - no sign-up, no cookies, no request logs - with optional passkey accounts for a private dashboard of your active shares.
