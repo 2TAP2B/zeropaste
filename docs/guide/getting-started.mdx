@@ -1,14 +1,26 @@
-# self-host in 30 seconds
+# Installation
 
-zeropaste is one Go binary. It stores ciphertext files on disk, serves your browser and needs nothing else - no database, no cache, no build step.
+Run zeropaste with Docker Compose or as a single binary, then register the owner account and create your first share.
 
-## docker
+zeropaste is one Go program that keeps ciphertext files on disk and serves your browser - no database, no cache, no build step, one container or one binary is all it needs.
+
+:::caution
+Passkeys need a domain.
+
+Browsers only allow WebAuthn on HTTPS pages, or on `localhost` while you try things out. Plan for a domain such as `paste.example.com` and put a TLS-capable reverse proxy in front of zeropaste - the app itself stays plain HTTP on purpose. See [reverse proxy](/guide/reverse-proxy).
+:::
+
+## Install
+
+### Docker Compose
+
+Download the compose file from the repository (every knob is a commented line, so the file is safe to commit with them untouched):
 
 ```bash
-docker run -d --name zeropaste -p 8080:8080 -v paste-data:/data ghcr.io/2tap2b/zeropaste:latest
+curl -O https://raw.githubusercontent.com/2TAP2B/zeropaste/main/compose.yaml
 ```
 
-Open `http://localhost:8080`. That is the whole deployment: the compose equivalent runs fully public as-pasted, and every knob ships as a commented line in `compose.yaml` - uncomment what you need, never commit a real key.
+Uncomment exactly what your instance needs - never commit a real key:
 
 ```yaml
 services:
@@ -35,44 +47,91 @@ volumes:
   paste-data:
 ```
 
-:::tip
-TLS is a reverse-proxy concern - the app stays plain HTTP so it works on LANs without certificates. See [reverse proxy](/guide/reverse-proxy).
-:::
-
-## nix
-
-A flake ships the package, the dev shell and a NixOS module:
-
-```nix
-services.zeropaste = {
-  enable = true;
-  listenAddress = "127.0.0.1:8080";
-};
-```
-
-The module runs with a `DynamicUser`, keeps state in `/var/lib/zeropaste` and sandbox-hardenes the unit. Secrets (the create-gate passphrase) come from an `EnvironmentFile`, never from the option system.
+Start it:
 
 ```bash
-nix run github:2tap2b/zeropaste   # or use the dev shell: nix develop
+docker compose up -d
 ```
 
-## from source
+The image is published on GHCR as `ghcr.io/2tap2b/zeropaste`; it is about 9 MB and carries the whole frontend, embedded.
+
+### Docker
+
+A single command gets you a fully open instance:
 
 ```bash
+docker run -d --name zeropaste -p 8080:8080 -v paste-data:/data ghcr.io/2tap2b/zeropaste:latest
+```
+
+Open `http://localhost:8080` and share - that is the whole deployment.
+
+### From source
+
+Building needs Go 1.26 or newer:
+
+```bash
+git clone https://github.com/2TAP2B/zeropaste && cd zeropaste
 go build -trimpath -ldflags="-s -w" -o zeropaste .
 ./zeropaste -addr 127.0.0.1:8080 -data ./data
 ```
 
-Flags: `-addr` (listen address, default `127.0.0.1:8080`) and `-data` (state directory, default `data`). Everything else is environment or the [admin config](/guide/configuration).
+Flags: `-addr` (listen address, default `127.0.0.1:8080`) and `-data` (state directory, default `data`). Everything else is environment or the [admin config](/guide/configuration). Run it as a service with systemd or your platform's equivalent.
 
-## first steps after boot
+### NixOS
 
-1. Open the site - the compose card is the whole first screen.
-2. Paste something, pick a ttl, hit **Encrypt & share**. The link contains the key in the fragment (`#...`) - share it, and it never leaves the URL bar.
-3. Sign up with a passkey (optional): the **first registered account owns the instance** - it gets the config tab, [invite links](/guide/accounts) and the admin surface. Everyone after that registers non-admin until promoted.
+The flake ships a hardened module (no external flake inputs):
 
-## what runs inside
+```nix
+# your flake.nix
+inputs.zeropaste.url = "github:2tap2b/zeropaste";
 
-- static shell + syntax highlighting + QR codes are embedded in the binary - no CDN calls from the frontend, ever.
-- the service worker caches only the static shell: offline boots render, paste traffic stays live.
-- a janitor deletes expired pastes every minute; the process never logs request IPs or content.
+# inside nixosConfigurations.<host>
+imports = [ inputs.zeropaste.nixosModules.zeropaste ];
+services.zeropaste = {
+  enable = true;
+  listenAddress = "127.0.0.1:8080"; # loopback default; your reverse proxy does TLS
+};
+```
+
+The module runs with a `DynamicUser`, keeps state in `/var/lib/zeropaste` and sandbox-hardenes the unit. Standalone: `nix run github:2tap2b/zeropaste`.
+
+## Register the owner account
+
+Open the site and click the account button to create an account with a passkey.
+
+- The **first registered account owns the instance** - it gets the admin flag, the config tab, [invite links](/guide/accounts) and the admin surface. Hand yesterday's env knobs to the UI: after the first save, the on-file config wins over the compose env, and `Save + reboot` applies it.
+- Everyone after that registers non-admin until you promote them in the config card.
+- Anonymous pasting stays available (and is the default) unless you lock the instance down.
+
+## Create your first share
+
+1. Paste anything into the compose card - or drop files, or hit Ctrl+V with an image on the clipboard.
+2. Pick a ttl, optionally flip `burn after reading`, hit **Encrypt & share**.
+3. The share link carries the decryption key in the fragment (`#...`) - send it to anyone; the key never leaves the URL bar and is stripped from it after decrypt.
+
+The [shares guide](/guide/shares) covers passphrases, burn-after-reading and the public lane; [files and images](/guide/files) covers bundles and chunked uploads.
+
+## What leaves the box
+
+Nothing. zeropaste makes **zero outgoing requests** - no update checks, no analytics, no CDN, no remote fonts or icons. Once running, the instance is inert:
+
+- all assets (including syntax highlighting and QR rendering) are embedded in the binary;
+- the service worker caches only the static shell - paste traffic (`/api/*`) always hits your instance and is never cached;
+- the process never logs request IPs or content; there are no plaintext values on disk to export.
+
+That makes air-gapped deployments a non-story: nothing to disable.
+
+## Upgrading
+
+- **Compose:** `docker compose pull && docker compose up -d`. State lives in the `paste-data` volume; upgrades carry nothing but the binary.
+- **Source:** pull and rebuild; the data directory format is forward-compatible within a release line.
+- **After the first config save:** the file layer beats compose env, so remove an undone env override at the source too - the config card tells you exactly what fires on the next boot (`restartNeeded`).
+
+Reader links keep working across upgrades: links are self-contained (`/p/<id>#<key>`), and keys never exist on the server to migrate in the first place.
+
+## Next steps
+
+- [Configuration](/guide/configuration) - env layers vs the admin config file, and every knob explained
+- [Reverse proxy](/guide/reverse-proxy) - caddy and nginx recipes, TLS and the `X-Forwarded-For` contract
+- [Accounts and administration](/guide/accounts) - passkeys, the dashboard, invite links, instance lockdown
+- [API reference](/api/reference) - every route, request and response shape
