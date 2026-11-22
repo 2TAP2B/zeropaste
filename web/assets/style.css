@@ -86,189 +86,195 @@
   /* shared by the dashboard identity rows too - scoped rules left them unspaced */
   .accrow { display: flex; gap: .6rem; flex-wrap: wrap; margin: .5rem 0; }
   #accpanel .hint { margin-top: .5rem; }
-  .dashhead {
-    display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
-    margin-bottom: .6rem;
+  /* ---- dashboard (/dash) ----
+     chrome: segmented tab bar + a distinct new-paste action; every pane is a
+     compose-style card with a head (title + one-line explanation) */
+  .dashhead { display: flex; justify-content: center; margin-bottom: 1rem; }
+  .dashtabs { display: flex; align-items: center; justify-content: center; gap: .6rem; flex-wrap: wrap; }
+  .segtabs {
+    display: inline-flex; gap: 2px; padding: 3px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+    box-shadow: var(--shadow);
   }
-.dashtabs {
-  display: flex; flex-wrap: wrap; gap: .35rem; align-items: center;
-}
-.dashtab {
-  font-size: .82rem; padding: .4rem .85rem; border-radius: 999px;
-  background: none; border: 1px solid var(--border); color: var(--muted);
-  text-decoration: none; cursor: pointer; white-space: nowrap; flex: 0 0 auto;
-  font-family: inherit;
-}
-.dashtab:hover { color: var(--text); border-color: var(--accent); }
-.dashtab.active {
-  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
-}
-.dashtab-new { font-weight: 600; }
-  .dashpane { margin-top: 1rem; }
-  /* dash panes wear the compose card so inputs read as inset fields, and the
-     pill row above acts as the tab bar */
-  .dashcard { padding: 1.15rem 1.25rem; }
+  .dashtab {
+    font: inherit; font-size: .82rem; padding: .38rem .9rem; border-radius: 999px;
+    background: none; border: none; color: var(--muted); cursor: pointer; white-space: nowrap;
+  }
+  .dashtab:hover { color: var(--text); }
+  .dashtab.active { background: var(--accent); color: var(--on-accent); }
+  .dashnew {
+    display: inline-flex; align-items: center; gap: .4rem;
+    font-size: .82rem; font-weight: 600; padding: .45rem .95rem; border-radius: 999px;
+    color: var(--accent); background: var(--surface); border: 1px solid var(--accent);
+    text-decoration: none; white-space: nowrap; box-shadow: var(--shadow);
+  }
+  .dashnew:hover { background: var(--accent); color: var(--on-accent); }
+  .dashnew svg { width: .95rem; height: .95rem; flex: 0 0 auto; }
+  .dashpane > .card + .card { margin-top: 1rem; }
   #dashroot .unlockbox { text-align: center; padding: 1.6rem .5rem; }
-  .dashedit { margin-top: 0; border-top: none; padding-top: 0; }
-  .dashpass {
-    margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .9rem;
+  .unlockacts { display: flex; gap: .6rem; justify-content: center; flex-wrap: wrap; margin-top: 1.1rem; }
+  .panehead { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; margin-bottom: 1.1rem; }
+  .panehead b { display: block; color: var(--text); font-size: .95rem; }
+  .panehead small { display: block; color: var(--muted); font-size: .75rem; line-height: 1.5; margin-top: .2rem; }
+  .panehead code { font-size: .7rem; }
+  .panehead > .chipmeta { flex: 0 0 auto; margin-top: .1rem; }
+  .sechead {
+    margin: 1.4rem 0 .55rem; font-size: .7rem; font-weight: 600;
+    letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
   }
+  .panehead + .sechead { margin-top: 0; }
+  /* dash fields: neutral at rest, accent on focus - dense forms read calmer
+     this way (the compose card keeps its own input look) */
+  #dashroot input[type="text"], #dashroot input[type="password"], #dashroot input[type="number"],
+  #accpanel input[type="text"] { border-color: var(--border); }
+  #dashroot input:focus, #accpanel input:focus { border-color: var(--accent); }
+  #dashroot button:disabled { opacity: .5; cursor: not-allowed; }
+  #dashroot button:disabled:hover { border-color: var(--border); }
+  #dashroot button.primary:disabled:hover { background: var(--accent); border-color: var(--accent); }
+  /* popover dashboard link: same metrics as its Sign out neighbour */
   .dashbtn {
-    display: inline-block; font-size: .75rem; font-weight: 600; text-decoration: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: .875rem; font-weight: 600; text-decoration: none;
     background: var(--accent); border: 1px solid var(--accent); color: var(--on-accent);
-    border-radius: 6px; padding: .3rem .75rem;
+    border-radius: 6px; padding: .6rem .8rem;
   }
   .dashbtn:hover { background: var(--accent-h); border-color: var(--accent-h); }
-  #revlist { display: flex; flex-direction: column; gap: .4rem; margin-top: .95rem; }
-  .revrow { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
-  .revhead {
-    display: flex; align-items: center; gap: .55rem;
-    padding: .5rem .6rem; font-size: .8rem;
-  }
-  /* open-share arrow (left side of every share/uplink row) - sized for
-     desktop too; the old rule lived only inside the mobile media query,
-     which left the icon invisible on larger screens */
-  .reviconlink {
+  /* one list language for every collection (shares, drop links, passkeys,
+     admins, invites): icon tile + title/meta column + icon actions - the read
+     view's download-card look */
+  .itemlist { display: flex; flex-direction: column; gap: .5rem; }
+  .item { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+  .itemhead { display: flex; align-items: center; gap: .75rem; padding: .6rem .6rem .6rem .7rem; }
+  .itemicon {
+    flex: 0 0 auto; width: 2.2rem; height: 2.2rem;
     display: inline-flex; align-items: center; justify-content: center;
-    width: 1.9rem; height: 1.9rem; padding: .4rem; flex: 0 0 auto;
-    color: var(--text); cursor: pointer;
+    color: var(--accent); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px;
   }
-  .reviconlink svg { width: 1.05rem; height: 1.05rem; }
-  .reviconlink:hover { color: var(--accent); }
-  .revslug {
-    background: none; border: none; padding: 0; margin: 0;
-    font: inherit; font-weight: 600; color: var(--text); cursor: pointer;
-    text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  .itemicon svg { width: 1.05rem; height: 1.05rem; }
+  .itemmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: .12rem; }
+  .itemtitle { display: flex; align-items: center; gap: .45rem; min-width: 0; font-size: .85rem; }
+  .itemname {
+    font: inherit; font-weight: 600; color: var(--text); text-decoration: none;
+    background: none; border: none; border-radius: 0; padding: 0; text-align: left;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .revslug:hover { color: var(--accent); }
-  .revmeta {
-    flex: 1 1 auto; color: var(--muted); min-width: 0;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  a.itemname, button.itemname { cursor: pointer; }
+  a.itemname:hover, button.itemname:hover { color: var(--accent); }
+  .itemtitle .chipmeta { flex: 0 0 auto; font-size: .66rem; padding: .05rem .45rem; }
+  .chipmeta.accent { color: var(--accent); border-color: var(--accent); }
+  .itemsub { font-size: .75rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .itemacts { display: flex; align-items: center; gap: .1rem; flex: 0 0 auto; }
+  .itemacts .switch { margin-left: .35rem; }
+  .itemempty {
+    text-align: center; padding: 1.3rem 1rem; font-size: .8rem; color: var(--muted);
+    border: 1px dashed var(--border); border-radius: 8px;
   }
-  .revacts { display: flex; align-items: center; gap: .35rem; flex: 0 0 auto; }
+  .itemempty b { display: block; color: var(--text); font-size: .85rem; margin-bottom: .2rem; }
+  .itemempty a { display: inline-block; margin-top: .7rem; color: var(--accent); font-weight: 600; text-decoration: none; }
+  .itemempty a:hover { text-decoration: underline; }
   .rowicon {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 1.9rem; height: 1.9rem; padding: .4rem;
+    width: 2rem; height: 2rem; padding: .45rem;
     background: none; border: 1px solid transparent; border-radius: 6px;
-    color: var(--muted); cursor: pointer;
+    color: var(--muted); cursor: pointer; text-decoration: none;
   }
   .rowicon svg { width: 1.05rem; height: 1.05rem; }
-  .rowicon:hover { color: var(--accent); border-color: var(--border); }
+  .rowicon:hover { color: var(--accent); border-color: var(--border); background: var(--surface); }
   .rowicon.danger:hover { color: var(--danger); }
   .rowicon.copied { color: var(--ok); border-color: transparent; }
   .chev svg { transition: transform .15s; }
   .chev.open svg { transform: rotate(180deg); }
-  .revdetail { padding: 0 .6rem .6rem; display: flex; flex-direction: column; gap: .35rem; }
-  .revdetail .srow { margin: 0; }
-  .revup { align-items: baseline; }
-  .revuplink { font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
-  .revwarn { font-size: .72rem; color: var(--danger); }
-  /* fragment-key repair: paste the original drop link back into this browser */
-  .revfix { flex-wrap: wrap; }
-  .revfix input { flex: 1 1 14rem; min-width: 0; font-size: .78rem; padding: .3rem .5rem; }
-  .revfix .rowcopy { flex: 0 0 auto; }
-  .revarrival a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .revform {
-    display: flex; flex-direction: column; gap: .55rem;
-    max-width: 520px; padding-bottom: .95rem;
-    border-bottom: 1px solid var(--border);
+  /* expandable detail under an item (drop links: link field + arrivals) */
+  .itemdetail { border-top: 1px solid var(--border); padding: .65rem .7rem .7rem; display: flex; flex-direction: column; gap: .45rem; }
+  .detaillabel { font-size: .68rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: .2rem; }
+  .linkfield { display: flex; gap: .3rem; align-items: center; }
+  #dashroot .linkfield input { flex: 1 1 auto; width: auto; min-width: 0; font-size: .78rem; padding: .45rem .6rem; color: var(--ok); background: var(--surface); }
+  .subrow {
+    display: flex; align-items: center; gap: .6rem; font-size: .8rem;
+    padding: .4rem .55rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
   }
-  .revform .accrow { margin: 0; flex-wrap: nowrap; }
-  .revform #revslug { flex: 1 1 auto; width: auto; min-width: 9rem; }
-  .revform input[aria-label="link expiry"] { width: 5.2rem; flex: 0 0 auto; padding-left: .6rem; padding-right: .6rem; }
-  .revform input[aria-label="max file size in MB"] { width: 4.6rem; flex: 0 0 auto; padding-left: .6rem; padding-right: .6rem; }
-  .revform input[aria-label="passphrase"] { flex: 1 1 auto; width: auto; }
-  .revactions { justify-content: flex-end; }
-  .revformhead { font-weight: 600; color: var(--text); font-size: .85rem; }
+  .subrow svg { width: .95rem; height: .95rem; color: var(--accent); flex: 0 0 auto; }
+  .subico { display: inline-flex; flex: 0 0 auto; }
+  .subrow a, .subrow .missing { flex: 1 1 auto; min-width: 0; color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subrow a:hover { color: var(--accent); }
+  .subrow .missing { color: var(--muted); }
+  .subsize { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+  .revwarn { font-size: .75rem; color: var(--danger); }
+  /* fragment-key repair: paste the original drop link back into this browser */
+  .revfix { display: flex; gap: .4rem; flex-wrap: wrap; }
+  #dashroot .revfix input { flex: 1 1 14rem; width: auto; min-width: 0; font-size: .78rem; padding: .45rem .6rem; }
+  .revfix button { flex: 0 0 auto; font-size: .8rem; padding: .45rem .8rem; }
+  /* reverse pane: labeled create form on top, drop links below */
+  .revform { display: flex; flex-direction: column; gap: .6rem; }
+  .revgrid { display: grid; grid-template-columns: minmax(0, 1fr) 6.5rem 6.5rem; gap: .6rem; }
+  .revpassrow { display: flex; gap: .6rem; align-items: flex-end; }
+  .revpassrow .field { flex: 1 1 auto; min-width: 0; }
+  .revpassrow .primary { flex: 0 0 auto; }
   #rhead { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; flex-wrap: wrap; margin-bottom: .75rem; }
   #rhead b { color: var(--text); }
   #rmeta { margin-top: 0; }
   .rdrop { margin-top: .75rem; margin-bottom: .1rem; }
   #rfiles { margin-top: .6rem; }
   #rsend { margin-top: .9rem; }
-  #dashrows { display: flex; flex-direction: column; gap: .4rem; }
-  .srow {
-    display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; row-gap: .35rem;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-    padding: .45rem .7rem; font-size: .85rem;
-  }
-  .srow a { color: var(--text); text-decoration: none; border-bottom: 1px dotted var(--border); }
-  .srow a:hover { color: var(--accent); border-bottom-color: var(--accent); }
-  .skind { margin-left: auto; color: var(--muted); font-size: .75rem; }
-  .swhen { color: var(--muted); font-size: .75rem; white-space: nowrap; }
-  .susers { color: var(--muted); font-size: .75rem; white-space: nowrap; }
-  .rowcopy { font-size: .75rem; padding: .3rem .65rem; flex: 0 0 auto; }
-  .rowdel {
-    font-size: .75rem; padding: .3rem .65rem; flex: 0 0 auto; color: var(--muted);
-  }
-  .rowdel:hover { color: var(--danger); border-color: var(--danger); }
-  .dashpass > b { display: block; margin-bottom: .5rem; color: var(--text); }
-  #passkeylist { display: flex; flex-direction: column; gap: .35rem; margin-bottom: .6rem; }
-  .passrow {
-    display: flex; align-items: center; gap: .55rem; font-size: .8rem; color: var(--text);
-    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-    padding: .4rem .6rem; max-width: 100%;
-  }
-  .passrow svg { width: .9rem; height: .9rem; color: var(--accent); flex: 0 0 auto; }
-  .passrow code { color: var(--muted); font-size: .72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dashedit b { color: var(--text); display: block; margin-bottom: .5rem; }
-  .dashedit .accrow { flex-wrap: nowrap; }
-  #dashname { flex: 1 1 auto; width: auto; min-width: 8rem; }
-  /* admin config pane: grouped knobs on the card, muted env tag per label */
-  .cfghead b { color: var(--text); display: block; font-size: .85rem; }
-  .cfghead p { margin: .4rem 0 0; font-size: .75rem; color: var(--muted); line-height: 1.5; }
-  .cfghead code { font-size: .7rem; }
-  .cfgsection { margin-top: 1rem; }
-  .cfgsection > b {
-    display: block; margin-bottom: .5rem; font-size: .72rem;
-    letter-spacing: .06em; color: var(--muted); text-transform: uppercase;
-  }
-  /* two-column rows: what the field is for | the field; the gate-key ✕ sits
-     between them; fields PIN to column 3 so inputs and switches share one left line */
-  .cfgrow {
-    display: grid; grid-template-columns: minmax(11rem, 1fr) 2.2rem 13.5rem;
-    gap: .6rem; align-items: center; margin: .8rem 0;
-  }
-  .cfglabel { min-width: 0; font-size: .8rem; color: var(--text); text-align: left; }
-  .cfgrow > input, .cfgrow > .switch { grid-column: 3; width: 100%; }
-  .cfgrow .switch { width: 2.9rem; justify-self: start; }
-  .cfgclear { font-size: .75rem; padding: .2rem .5rem; grid-column: 2; justify-self: start; }
-  .cfgclear.active { color: var(--danger); border-color: var(--danger); }
-  /* exclusive choices: whole row clickable, custom radio dot, checked row
-     carries the accent border; descriptions sit under the title */
-  .cfgchoice { margin: .8rem 0; }
+  /* account pane */
+  .inlinerow { display: flex; gap: .6rem; margin-top: .3rem; }
+  #dashroot .inlinerow input { flex: 1 1 auto; width: auto; min-width: 0; }
+  .inlinerow button { flex: 0 0 auto; }
+  .addbtn { display: inline-flex; align-items: center; gap: .45rem; margin-top: .6rem; font-size: .82rem; }
+  .addbtn svg { width: .95rem; height: .95rem; color: var(--accent); flex: 0 0 auto; }
+  /* config: exclusive choices as 3-up tiles - whole tile clickable, custom
+     radio dot, checked tile gets the accent border and a light accent wash */
+  .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
   .cfgopt {
-    display: flex; gap: .6rem; align-items: flex-start;
-    padding: .5rem .6rem; margin: 0 0 .25rem;
-    border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+    display: flex; gap: .55rem; align-items: flex-start; min-width: 0;
+    padding: .65rem .7rem; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); cursor: pointer; transition: border-color .15s, background-color .15s;
   }
   .cfgopt:hover { border-color: var(--muted); }
-  .cfgopt:has(input:checked) { border-color: var(--accent); }
+  .cfgopt:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, var(--bg)); }
   .cfgopt input[type="radio"] {
-    appearance: none; flex: 0 0 auto; width: 15px; height: 15px; margin: .2rem 0 0;
+    appearance: none; flex: 0 0 auto; width: 15px; height: 15px; margin: .15rem 0 0;
     border: 1px solid var(--border); border-radius: 50%; background: var(--surface); cursor: pointer;
   }
   .cfgopt input[type="radio"]:checked { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--surface); }
   .cfgopt input[type="radio"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .cfgopt .opttext { display: block; min-width: 0; }
-  .cfgopt .opttext b { display: block; color: var(--text); font-size: .85rem; }
-  .cfgopt .opttext small { display: block; color: var(--muted); font-size: .75rem; margin-top: .15rem; }
-  /* invites section: mint row + revealed link + live list */
-  .inviteout { display: flex; gap: .5rem; margin: .55rem 0 0; }
-  .inviteout input { flex: 1 1 auto; width: auto; min-width: 0; font-size: .78rem; color: var(--ok); }
-  .inviteout .rowcopy { flex: 0 0 auto; display: inline-flex; align-items: center; padding: .5rem; }
-  .inviteout .rowcopy svg { width: .95rem; height: .95rem; }
-  .invrow {
-    display: flex; align-items: center; gap: .7rem; margin: .4rem 0 0;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-    padding: .35rem .7rem; font-size: .78rem;
+  .cfgopt .opttext b { display: block; color: var(--text); font-size: .82rem; }
+  .cfgopt .opttext small { display: block; color: var(--muted); font-size: .72rem; margin-top: .2rem; line-height: 1.45; }
+  .setfield { display: flex; flex-direction: column; gap: .3rem; margin-top: .6rem; }
+  .setrow {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    margin-top: .6rem; padding: .65rem .75rem;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
   }
-  .invrow code { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .invmeta { flex: 1 1 auto; text-align: right; color: var(--muted); font-size: .72rem; }
-  .cfgadmins { margin-top: .25rem; }
-  .cfgadmins .admname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; color: var(--text); }
-  .cfgadmins .switch { flex: 0 0 auto; }
-  .cfgactions { margin-top: 1.1rem; justify-content: flex-end; }
+  .settext { min-width: 0; }
+  .settext b { display: block; color: var(--text); font-size: .82rem; }
+  .settext small { display: block; color: var(--muted); font-size: .72rem; margin-top: .15rem; line-height: 1.45; }
+  .limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem 1rem; }
+  .limit { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
+  .limit small { font-size: .7rem; color: var(--muted); }
+  .unitfield { display: flex; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+  .unitfield:focus-within { border-color: var(--accent); }
+  #dashroot .unitfield input, #dashroot .unitfield input:focus { flex: 1 1 auto; width: auto; min-width: 0; border-color: transparent; background: transparent; }
+  .unitfield > span { padding: 0 .75rem 0 .25rem; font-size: .75rem; color: var(--muted); white-space: nowrap; }
+  /* sticky save bar: in reach while scrolling the settings card; states:
+     clean / dirty (unsaved edits) / pending (saved, reboot needed) */
+  .cfgbar {
+    position: sticky; bottom: 0; z-index: 2;
+    display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+    margin: 1.25rem -1.25rem -1.25rem; padding: .75rem 1.25rem;
+    background: var(--surface); border-top: 1px solid var(--border);
+    border-radius: 0 0 10px 10px;
+  }
+  .cfgstate { flex: 1 1 auto; font-size: .78rem; color: var(--muted); }
+  .cfgbar.dirty .cfgstate, .cfgbar.pending .cfgstate { color: var(--accent); font-weight: 600; }
+  .cfgbar.dirty .cfgstate::before, .cfgbar.pending .cfgstate::before { content: "\25CF  "; }
+  .invmint { display: flex; gap: .6rem; align-items: flex-end; }
+  .invmint .field { width: 8.5rem; flex: 0 0 auto; }
+  .inviteout { display: flex; gap: .3rem; align-items: center; margin-top: .6rem; }
+  #dashroot .inviteout input { flex: 1 1 auto; width: auto; min-width: 0; font-size: .78rem; color: var(--ok); }
+  #invitelist:not(:empty) { margin-top: .6rem; }
   /* switch knob for the boolean knobs */
   .switch {
     position: relative; width: 2.9rem; height: 1.55rem; padding: 0;
@@ -284,14 +290,24 @@
   .switch[aria-checked="true"]::after { left: calc(100% - 1.23rem); background: var(--on-accent); }
   .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @media (max-width: 540px) {
-    .cfgrow {
-      grid-template-columns: auto 1fr;
-      grid-template-areas: "label label" "clear field";
-    }
-    .cfglabel { grid-area: label; }
-    .cfgrow input, .cfgrow .switch { grid-area: field; justify-self: start; width: 100%; }
-    .cfgrow .switch { width: 2.9rem; } /* the knob keeps its track size on phones */
-    .cfgclear { grid-area: clear; }
+    .dashtabs { width: 100%; gap: .4rem; flex-wrap: nowrap; }
+    .segtabs { flex: 1 1 auto; min-width: 0; }
+    .dashtab { flex: 1 1 auto; padding: .38rem .3rem; font-size: .74rem; }
+    .dashnew { padding: .45rem .6rem; }
+    .dashnew span { display: none; }
+    .tiles, .limits { grid-template-columns: 1fr; }
+    .revgrid { grid-template-columns: minmax(0, 1fr) 4.8rem 4.8rem; }
+    .revpassrow, .invmint { flex-direction: column; align-items: stretch; }
+    .invmint .field { width: auto; }
+    .cfgbar { margin: 1rem -1rem -1rem; padding: .7rem 1rem; }
+    .cfgstate { flex-basis: 100%; }
+    .itemhead { gap: .6rem; padding: .55rem .5rem .55rem .6rem; }
+    .itemicon { width: 2rem; height: 2rem; }
+    /* chips and meta wrap instead of crushing the title to an ellipsis */
+    .itemtitle { flex-wrap: wrap; row-gap: .2rem; }
+    .itemsub { white-space: normal; }
+    .rowicon { width: 1.85rem; height: 1.85rem; padding: .4rem; }
+    .panehead small { font-size: .72rem; }
   }
   .theme-toggle .sun { display: none; }
   :root[data-theme="light"] .theme-toggle .sun { display: block; }
@@ -578,10 +594,6 @@
     .copybtn { width: auto; justify-content: center; padding: .65rem; }
     .copybtn svg { width: 17px; height: 17px; }
     .readhead { margin-bottom: .6rem; }
-    /* tab pills sit on their own centered line on phones */
-    .dashhead { flex-wrap: wrap; }
-    .dashtabs { order: 2; width: 100%; justify-content: center; gap: .2rem; }
-    .dashtab { padding: .35rem .4rem; font-size: .75rem; }
     .unlockbox { padding-top: .25rem; }
     .unlockrow { flex-direction: column; }
     .unlockrow .primary { width: 100%; }
@@ -589,8 +601,6 @@
     .filesave { padding: .45rem .9rem; font-size: .8rem; }
     .previewopen img.preview { max-height: 240px; }
     #imgbox img { max-width: 84vw; }
-    .dashedit .accrow { flex-wrap: wrap; }
-    #dashname { width: 100%; flex: 1 1 100%; }
     .readerror { padding: 1.5rem .25rem; }
     /* header: brand alone on one line, controls right */
     .brand span { display: none; }

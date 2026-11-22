@@ -62,14 +62,15 @@ function dropFrags(): void {
   }
 }
 
+// full phrase for list meta lines: "expires in 24 h" / "expired"
 function expiryText(unixSec: number): string {
   const ms = unixSec * 1000 - Date.now();
-  if (!(ms > 0)) return "already expired";
+  if (!(ms > 0)) return "expired";
   const min = Math.round(ms / 60000);
-  if (min < 60) return `in ${min} min`;
+  if (min < 60) return `expires in ${min} min`;
   const h = Math.round(min / 60);
-  if (h < 48) return `in ${h} h`;
-  return `in ${Math.round(h / 24)} d`;
+  if (h < 48) return `expires in ${h} h`;
+  return `expires in ${Math.round(h / 24)} d`;
 }
 
 export async function refreshMe(): Promise<void> {
@@ -309,12 +310,20 @@ export async function logout(): Promise<void> {
 
 export async function bootAccount(): Promise<void> {
   // fresh registration (signed-out → account): one-time welcome tour; the
-  // attach button (signed-in) skips it - an existing account needs no tour
+  // attach button (signed-in) skips it - an existing account needs no tour.
+  // Registering from the /dash anon card's popover with the tour already seen
+  // re-enters the dashboard in place instead of leaving the sign-in card up.
   $("regbtn").addEventListener("click", () => {
     void registerStart().then((ok) => {
-      if (!ok || tourSeen()) return;
-      (document.getElementById("accpanel") as HTMLDivElement).hidePopover();
-      showWelcome();
+      if (!ok) return;
+      const panel = document.getElementById("accpanel") as HTMLDivElement;
+      if (!tourSeen()) {
+        panel.hidePopover();
+        showWelcome();
+      } else if (location.pathname === "/dash") {
+        panel.hidePopover();
+        void returnToDash();
+      }
     });
   });
   $("attachbtn").addEventListener("click", () => void registerStart()); // signed-in: attach another key
@@ -435,16 +444,20 @@ export async function dashboardPage(): Promise<void> {
   }
 
   $("dashsave").addEventListener("click", () => void saveName());
+  // signed-in attach: a new passkey for an existing account - never the
+  // welcome tour (that belongs to fresh registrations only)
   $("dashreg").addEventListener("click", () => {
-    (document.getElementById("dashreg") as HTMLButtonElement).disabled = true;
-    registerStart()
-      .then((ok) => {
-        // the accpanel (and its #accerr) is closed on /dash - mirror the failure
-        if (!ok) return void dashError("registration failed - check the passkey dialog and try again");
-        if (tourSeen()) return void loadDash();
-        showWelcome(); // tour exit routes back into the dashboard
-      })
-      .catch((e) => dashError(e instanceof Error ? e.message : "failed"));
+    const btn = $("dashreg") as HTMLButtonElement;
+    btn.disabled = true;
+    void registerStart().then((ok) => {
+      btn.disabled = false;
+      // the accpanel (and its #accerr) is closed on /dash - mirror the failure
+      if (!ok) return void dashError("adding the passkey failed - check the passkey dialog and try again");
+      void loadDash();
+    });
+  });
+  $("dashcreate").addEventListener("click", () => {
+    (document.getElementById("accpanel") as HTMLDivElement).showPopover();
   });
   $("dashlogin").addEventListener("click", () => {
     // errors must land in #dasherr (the accpanel is closed on /dash);
@@ -520,9 +533,22 @@ interface CfgView {
 
 // whether the server holds a gate key (CREATE_KEY set flag from the last view)
 let keySet = false;
+// the last server view (Discard repaints from it) and its form snapshot: the
+// save bar compares the live form against this to tell dirty from clean
+let lastView: CfgView | null = null;
+let cfgSnapshot = "";
+let pendingRestart = false; // the saved file differs from what this boot loaded
+let cfgBusy = false; // a save/reboot is in flight - keep the bar's buttons down
+let meId = ""; // the signed-in identity: marks "you" in the admins list
 
 function cfgError(msg: string): void {
   const err = $("cfgerr");
+  err.textContent = msg;
+  err.classList.remove("hidden");
+}
+
+function peopleError(msg: string): void {
+  const err = $("peopleerr");
   err.textContent = msg;
   err.classList.remove("hidden");
 }
@@ -540,103 +566,182 @@ async function resErr(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
-function cfgNote(msg: string): void {
-  const note = $("cfgnote");
-  note.textContent = msg;
-  note.classList.toggle("hidden", msg === "");
+function pickedValue(group: string): string {
+  return ($(group) as HTMLElement).querySelector<HTMLInputElement>("input[type=radio]:checked")?.value ?? "open";
 }
 
-// the admin list: one switch per stored identity; demoting the last admin
-// draws the server's 400 into #cfgerr and the switch snaps back
+// the gate passphrase field belongs to passphrase mode; the forget switch to
+// the other modes, and only while a key is stored
+function syncKeyRows(): void {
+  const passMode = pickedValue("cfgaccess") === "passphrase";
+  $("cfgkeyrow").classList.toggle("hidden", !passMode);
+  $("cfgforgetrow").classList.toggle("hidden", passMode || !keySet);
+}
+
+// limits show MB, the wire carries bytes: an untouched field sends its exact
+// stored byte count back, so the 2-decimal display never drifts the value
+function setMB(id: string, bytes: number): void {
+  const el = $(id) as HTMLInputElement;
+  const shown = String(Math.round((bytes / 1048576) * 100) / 100);
+  el.value = shown;
+  el.dataset.shown = shown;
+  el.dataset.bytes = String(bytes);
+}
+
+function mbBytes(id: string): number {
+  const el = $(id) as HTMLInputElement;
+  return el.value === el.dataset.shown ? Number(el.dataset.bytes) : Math.round(Number(el.value) * 1048576);
+}
+
+const ADMIN_ROLE = "admin - settings, people and invites";
+const MEMBER_ROLE = "member - shares and drop links";
+
 interface AdminRow {
   id: string;
   name: string;
   admin: boolean;
 }
 
+// admins list: one switch per stored identity; demoting the last admin draws
+// the server's 400 into #peopleerr and the switch keeps its stored state
 async function renderAdmins(): Promise<void> {
   const box = $("cfgadmins") as HTMLElement;
-  box.textContent = "";
   const res = await fetch("/api/admin/identities").catch(() => null);
   if (!res?.ok) return;
   const rows = ((await res.json()) as { identities: AdminRow[] }).identities;
+  box.textContent = "";
   for (const idn of rows) {
-    const row = document.createElement("div");
-    row.className = "invrow";
+    const label = idn.name || idn.id;
     const name = document.createElement("span");
-    name.className = "admname";
-    name.textContent = idn.name || idn.id;
+    name.textContent = label;
     const sw = document.createElement("button");
     sw.type = "button";
     sw.className = "switch";
     sw.setAttribute("role", "switch");
     sw.setAttribute("aria-checked", String(idn.admin));
-    sw.setAttribute("aria-label", "admin: " + (idn.name || idn.id));
+    sw.setAttribute("aria-label", "admin rights: " + label);
+    const row = itemRow(
+      idn.admin ? IC.shield : IC.user,
+      name,
+      idn.id === meId ? [chip("you", "accent")] : [],
+      idn.admin ? ADMIN_ROLE : MEMBER_ROLE,
+      [sw],
+    );
     sw.addEventListener("click", () => {
       sw.disabled = true;
+      $("peopleerr").classList.add("hidden");
       void (async () => {
         const res = await fetch("/api/admin/identities/" + idn.id, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ admin: !idn.admin }),
         });
+        sw.disabled = false;
         if (!res.ok) {
-          cfgError(await resErr(res, "change failed"));
-          sw.setAttribute("aria-checked", String(idn.admin)); // revert
-          sw.disabled = false;
+          peopleError(await resErr(res, "change failed"));
           return;
         }
         idn.admin = !idn.admin;
         sw.setAttribute("aria-checked", String(idn.admin));
-        sw.disabled = false;
+        (row.querySelector(".itemicon") as HTMLElement).innerHTML = idn.admin ? IC.shield : IC.user; // static icon markup only
+        (row.querySelector(".itemsub") as HTMLElement).textContent = idn.admin ? ADMIN_ROLE : MEMBER_ROLE;
         await refreshMe(); // a self-change flips the config tab visibility
       })();
     });
-    row.append(name, sw);
     box.append(row);
   }
 }
 
-// paint the form from the server view; the note line carries the only
-// operational state the admin needs: a saved-but-not-running draft
+interface InviteRow {
+  token: string;
+  uses: number;
+  maxUses: number;
+}
+
+async function renderInvites(): Promise<void> {
+  const box = $("invitelist") as HTMLElement;
+  const res = await fetch("/api/admin/invites").catch(() => null);
+  if (!res?.ok) return;
+  const rows = ((await res.json()) as { invites: InviteRow[] }).invites;
+  box.textContent = "";
+  for (const inv of rows) {
+    const name = document.createElement("span");
+    name.textContent = "invite " + inv.token.slice(0, 8) + "…";
+    const cp = iconBtn("Copy invite link", IC.copy);
+    cp.addEventListener("click", () => void copy(location.origin + "/#invite=" + inv.token, cp));
+    const del = iconBtn("Revoke invite", IC.del, "rowicon danger");
+    del.addEventListener("click", () => {
+      del.disabled = true;
+      void (async () => {
+        await fetch("/api/admin/invites/" + inv.token, { method: "DELETE" }).catch(() => {});
+        await renderInvites();
+      })();
+    });
+    const left = inv.maxUses - inv.uses;
+    box.append(itemRow(IC.link, name, [], `${inv.uses} of ${inv.maxUses} used · ${left} left`, [cp, del]));
+  }
+}
+
+// paint the form from a server view, then snapshot it: the save bar measures
+// every later edit against that snapshot
 function paintConfig(v: CfgView): void {
+  lastView = v;
   const by: Record<string, CfgKnob> = Object.fromEntries(v.knobs.map((k) => [k.name, k]));
   const pick = (group: string, val: string): void => {
     for (const el of ($(group) as HTMLElement).querySelectorAll<HTMLInputElement>("input[type=radio]")) {
       el.checked = el.value === val;
     }
   };
-  const access = String(by["PASTE_ACCESS"]?.value ?? "open");
-  pick("cfgaccess", access);
-  ($("cfgkeyrow") as HTMLElement).classList.toggle("hidden", access !== "passphrase");
-  keySet = by["CREATE_KEY"]?.set === true;
+  pick("cfgaccess", String(by["PASTE_ACCESS"]?.value ?? "open"));
   pick("cfgregroup", String(by["REGISTRATION"]?.value ?? "open"));
-  const k = by["PUBLIC_PASTES"];
-  if (k) ($("cfgpublic") as HTMLElement).setAttribute("aria-checked", String(k.value === true));
+  keySet = by["CREATE_KEY"]?.set === true;
+  const key = $("cfgcreate") as HTMLInputElement;
+  key.value = ""; // a stored key is never echoed back
+  key.placeholder = keySet ? "stored - type to replace it" : "required - type a passphrase";
+  $("cfgforget").setAttribute("aria-checked", "false");
+  syncKeyRows();
+  $("cfgpublic").setAttribute("aria-checked", String(by["PUBLIC_PASTES"]?.value === true));
   ($("cfgttl") as HTMLInputElement).value = String(by["MAX_TTL_DAYS"]?.value ?? "");
   ($("cfgshares") as HTMLInputElement).value = String(by["MAX_SHARES_PER_ACCOUNT"]?.value ?? "");
-  ($("cfgupload") as HTMLInputElement).value = String(by["MAX_UPLOAD"]?.value ?? "");
-  ($("cfgchunk") as HTMLInputElement).value = String(by["CHUNK"]?.value ?? "");
-  cfgNote(v.restartNeeded ? "the file holds values the running process has not loaded yet - Save + reboot applies them" : "");
+  setMB("cfgupload", Number(by["MAX_UPLOAD"]?.value ?? 0));
+  setMB("cfgchunk", Number(by["CHUNK"]?.value ?? 0));
+  pendingRestart = v.restartNeeded;
+  cfgSnapshot = JSON.stringify(cfgBody());
+  syncCfgBar();
 }
 
-// body = only fields with a value typed by the user; blank inputs keep the
-// server's stored value, createKey default (typed text -> replace, checkbox -> clear)
+// the form as a PUT body: every knob, plus createKey only when typed in
+// passphrase mode (replace) or when the forget switch is on elsewhere (clear)
 function cfgBody(): Record<string, unknown> {
   const body: Record<string, unknown> = {};
-  const create = ($("cfgcreate") as HTMLInputElement).value;
-  if (create || ($("cfgclear") as HTMLElement).classList.contains("active")) body.createKey = create;
-  body.pasteAccess =
-    ($("cfgaccess") as HTMLElement).querySelector<HTMLInputElement>("input[type=radio]:checked")?.value ?? "open";
-  body.registration =
-    ($("cfgregroup") as HTMLElement).querySelector<HTMLInputElement>("input[type=radio]:checked")?.value ?? "open";
-  body.publicPastes = ($("cfgpublic") as HTMLElement).getAttribute("aria-checked") === "true";
-  const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
-  body.maxTtlDays = num("cfgttl");
-  body.maxShares = Math.round(num("cfgshares"));
-  body.maxUpload = Math.round(num("cfgupload"));
-  body.chunk = Math.round(num("cfgchunk"));
+  const access = pickedValue("cfgaccess");
+  body.pasteAccess = access;
+  const typed = ($("cfgcreate") as HTMLInputElement).value;
+  if (access === "passphrase" && typed) body.createKey = typed;
+  if (access !== "passphrase" && $("cfgforget").getAttribute("aria-checked") === "true") body.createKey = "";
+  body.registration = pickedValue("cfgregroup");
+  body.publicPastes = $("cfgpublic").getAttribute("aria-checked") === "true";
+  body.maxTtlDays = Number(($("cfgttl") as HTMLInputElement).value);
+  body.maxShares = Math.round(Number(($("cfgshares") as HTMLInputElement).value));
+  body.maxUpload = mbBytes("cfgupload");
+  body.chunk = mbBytes("cfgchunk");
   return body;
+}
+
+// save bar: clean / dirty (unsaved edits) / pending (saved, waiting for a reboot)
+function syncCfgBar(): void {
+  const dirty = JSON.stringify(cfgBody()) !== cfgSnapshot;
+  const apply = $("cfgapply") as HTMLButtonElement;
+  ($("cfgsave") as HTMLButtonElement).disabled = cfgBusy || !dirty;
+  apply.disabled = cfgBusy || (!dirty && !pendingRestart);
+  apply.textContent = !dirty && pendingRestart ? "Reboot now" : "Save + reboot";
+  $("cfgdiscard").classList.toggle("hidden", !dirty || cfgBusy);
+  const bar = $("cfgbar");
+  bar.classList.toggle("dirty", dirty);
+  bar.classList.toggle("pending", !dirty && pendingRestart);
+  if (!cfgBusy) {
+    $("cfgnote").textContent = dirty ? "unsaved changes" : pendingRestart ? "saved - reboot to apply" : "no unsaved changes";
+  }
 }
 
 function wireConfig(): void {
@@ -644,42 +749,48 @@ function wireConfig(): void {
     const res = await fetch("/api/admin/config").catch(() => null);
     if (res?.ok) {
       paintConfig((await res.json()) as CfgView);
-      void renderAdmins();
+      void renderInvites();
     } else {
-      // non-admin session or server unreachable: keep the card header, drop
-      // the form body so the error line below stays visible
-      const body = document.getElementById("cfgbody");
-      if (body) body.classList.add("hidden");
+      // non-admin session or server unreachable: keep the card head, drop the
+      // form, the bar and the people card so the error line is the message
+      $("cfgbody").classList.add("hidden");
+      $("cfgbar").classList.add("hidden");
+      $("cfgpeople").classList.add("hidden");
       cfgError("configuration is unavailable for this session");
     }
   })();
 
   const save = async (apply: boolean): Promise<void> => {
-    const err = $("cfgerr");
-    err.classList.add("hidden");
+    $("cfgerr").classList.add("hidden");
     const draft = cfgBody();
-    if (draft.pasteAccess === "passphrase" && !draft.createKey && !keySet) {
-      cfgError("passphrase mode needs a gate key - type one into the field");
+    const dirty = JSON.stringify(draft) !== cfgSnapshot;
+    if (dirty && draft.pasteAccess === "passphrase" && !draft.createKey && !keySet) {
+      cfgError("passphrase mode needs a gate passphrase - type one into the field");
+      ($("cfgcreate") as HTMLInputElement).focus();
       return;
     }
+    cfgBusy = true;
+    syncCfgBar();
     try {
-      const res = await fetch("/api/admin/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
-      });
-      if (!res.ok) {
-        throw new Error(await resErr(res, "save failed"));
+      if (dirty) {
+        $("cfgnote").textContent = "saving...";
+        const res = await fetch("/api/admin/config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(draft),
+        });
+        if (!res.ok) {
+          throw new Error(await resErr(res, "save failed"));
+        }
+        paintConfig((await res.json()) as CfgView);
       }
-      paintConfig((await res.json()) as CfgView);
-      ($("cfgcreate") as HTMLInputElement).value = "";
-      ($("cfgclear") as HTMLInputElement).classList.remove("active");
       if (apply) {
+        // 409 = a reboot is already scheduled: keep waiting for it
         const applyRes = await fetch("/api/admin/apply", { method: "POST" });
-        if (!applyRes.ok) {
+        if (!applyRes.ok && applyRes.status !== 409) {
           throw new Error(await resErr(applyRes, "reboot failed"));
         }
-        cfgNote("server is rebooting with the saved configuration...");
+        $("cfgnote").textContent = "server is rebooting with the saved configuration...";
         for (let i = 0; i < 20; i++) {
           await delay(500);
           const check = await fetch("/api/gate").catch(() => null);
@@ -692,60 +803,36 @@ function wireConfig(): void {
       }
     } catch (e) {
       cfgError(e instanceof Error ? e.message : "save failed");
+    } finally {
+      cfgBusy = false;
+      syncCfgBar();
     }
   };
   $("cfgsave").addEventListener("click", () => void save(false));
-  // Save + reboot: one click always saves BEFORE the drain; 409 (already restarting) keeps the reboot going
   $("cfgapply").addEventListener("click", () => void save(true));
-  $("cfgclear").addEventListener("click", () => {
-    const btn = $("cfgclear") as HTMLElement;
-    btn.classList.toggle("active");
+  $("cfgdiscard").addEventListener("click", () => {
+    $("cfgerr").classList.add("hidden");
+    if (lastView) paintConfig(lastView);
   });
-  // boolean knobs: role=switch buttons flip their own aria-checked
-  $("cfgpublic").addEventListener("click", () => {
-    const sw = $("cfgpublic") as HTMLElement;
-    sw.setAttribute("aria-checked", sw.getAttribute("aria-checked") === "true" ? "false" : "true");
-  });
-  // the gate-key field belongs to passphrase mode only
-  $("cfgaccess").addEventListener("change", () => {
-    ($("cfgkeyrow") as HTMLElement).classList.toggle(
-      "hidden",
-      ($("cfgaccess") as HTMLElement).querySelector<HTMLInputElement>("input[type=radio]:checked")?.value !==
-        "passphrase",
-    );
-  });
+  // switches flip their own aria-checked, then the bar re-measures dirtiness
+  for (const id of ["cfgpublic", "cfgforget"]) {
+    $(id).addEventListener("click", () => {
+      const sw = $(id);
+      sw.setAttribute("aria-checked", sw.getAttribute("aria-checked") === "true" ? "false" : "true");
+      syncCfgBar();
+    });
+  }
+  $("cfgaccess").addEventListener("change", syncKeyRows);
+  // typed values and radio picks bubble up here
+  $("confedit").addEventListener("input", syncCfgBar);
+  $("confedit").addEventListener("change", syncCfgBar);
+
   // invites: mint a link, show it once, keep the live list under it
-  const renderInvites = async (): Promise<void> => {
-    const box = $("invitelist") as HTMLElement;
-    box.textContent = "";
-    const res = await fetch("/api/admin/invites").catch(() => null);
-    if (!res?.ok) return;
-    const rows = ((await res.json()) as { invites: { token: string; uses: number; maxUses: number; created: number }[] }).invites;
-    for (const inv of rows) {
-      const row = document.createElement("div");
-      row.className = "invrow";
-      const code = document.createElement("code");
-      code.textContent = inv.token.slice(0, 10) + "…";
-      const meta = document.createElement("span");
-      meta.className = "invmeta";
-      meta.textContent = `${inv.uses}/${inv.maxUses} used`;
-      const del = iconBtn("Revoke invite", IC.del, "rowicon danger");
-      del.addEventListener("click", () => {
-        del.disabled = true;
-        void (async () => {
-          await fetch("/api/admin/invites/" + inv.token, { method: "DELETE" }).catch(() => {});
-          await renderInvites();
-        })();
-      });
-      row.append(code, meta, del);
-      box.append(row);
-    }
-  };
-  const linkFor = (token: string): string => location.origin + "/#invite=" + token;
   $("invcreate").addEventListener("click", () => {
     void (async () => {
       const btn = $("invcreate") as HTMLButtonElement;
       btn.disabled = true;
+      $("peopleerr").classList.add("hidden");
       try {
         const res = await fetch("/api/admin/invites", {
           method: "POST",
@@ -757,13 +844,13 @@ function wireConfig(): void {
         }
         const { token } = (await res.json()) as { token: string };
         const out = $("invitelink") as HTMLInputElement;
-        out.value = linkFor(token);
-        ($("inviteout") as HTMLElement).classList.remove("hidden");
+        out.value = location.origin + "/#invite=" + token;
+        $("inviteout").classList.remove("hidden");
         out.focus();
         out.select();
         await renderInvites();
       } catch (e) {
-        cfgError(e instanceof Error ? e.message : "invite create failed");
+        peopleError(e instanceof Error ? e.message : "invite create failed");
       } finally {
         btn.disabled = false;
       }
@@ -771,7 +858,6 @@ function wireConfig(): void {
   });
   $("invcopy").addEventListener("click", () => void copy(($("invitelink") as HTMLInputElement).value, $("invcopy")));
   $("invitelink").addEventListener("focus", (e) => (e.target as HTMLInputElement).select());
-  void renderInvites();
 }
 
 async function saveName(): Promise<void> {
@@ -815,12 +901,23 @@ interface RevRow {
   items: { id: string; size: number; created: number }[];
 }
 
-// inline icon snippets (static strings only; never user data)
+// inline icon snippets (static strings only; never user data) - lucide shapes
+const SVG = (inner: string): string =>
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  inner +
+  "</svg>";
 const IC = {
-  chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>',
-  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
-  open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>',
-  del: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
+  chev: SVG('<polyline points="6 9 12 15 18 9"></polyline>'),
+  copy: SVG('<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>'),
+  open: SVG('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line>'),
+  del: SVG('<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>'),
+  text: SVG('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path>'),
+  files: SVG('<path d="M20 7h-3a2 2 0 0 1-2-2V2"></path><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"></path><path d="M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8"></path>'),
+  inbox: SVG('<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path>'),
+  key: SVG('<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"></path><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"></circle>'),
+  link: SVG('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>'),
+  user: SVG('<circle cx="12" cy="8" r="5"></circle><path d="M20 21a8 8 0 0 0-16 0"></path>'),
+  shield: SVG('<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path>'),
 };
 
 function iconBtn(aria: string, svg: string, cls = "rowicon"): HTMLButtonElement {
@@ -833,6 +930,71 @@ function iconBtn(aria: string, svg: string, cls = "rowicon"): HTMLButtonElement 
   return b;
 }
 
+// icon action that opens a share/drop link in a new tab
+function openLink(href: string, aria: string): HTMLAnchorElement {
+  const a = document.createElement("a");
+  a.className = "rowicon";
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.title = aria;
+  a.setAttribute("aria-label", aria);
+  a.innerHTML = IC.open; // static icon markup only
+  return a;
+}
+
+// one list language for every dashboard collection: icon tile + title line
+// (name + chips) + muted meta line + icon actions. Callers build the name
+// element (link, button or span) and fill user data via textContent only.
+function itemRow(icon: string, name: HTMLElement, chips: HTMLElement[], sub: string, acts: HTMLElement[]): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "item";
+  const head = document.createElement("div");
+  head.className = "itemhead";
+  const ico = document.createElement("span");
+  ico.className = "itemicon";
+  ico.innerHTML = icon; // static icon markup only
+  const main = document.createElement("div");
+  main.className = "itemmain";
+  const title = document.createElement("div");
+  title.className = "itemtitle";
+  name.classList.add("itemname");
+  title.append(name, ...chips);
+  const meta = document.createElement("span");
+  meta.className = "itemsub";
+  meta.textContent = sub;
+  main.append(title, meta);
+  const box = document.createElement("div");
+  box.className = "itemacts";
+  box.append(...acts);
+  head.append(ico, main, box);
+  row.append(head);
+  return row;
+}
+
+function chip(text: string, tone = ""): HTMLSpanElement {
+  const c = document.createElement("span");
+  c.className = tone ? "chipmeta " + tone : "chipmeta";
+  c.textContent = text;
+  return c;
+}
+
+// dashed empty-state box (the compose dropzone's language) with an optional CTA
+function emptyState(title: string, text: string, cta?: { href: string; label: string }): HTMLDivElement {
+  const box = document.createElement("div");
+  box.className = "itemempty";
+  const b = document.createElement("b");
+  b.textContent = title;
+  box.append(b, text);
+  if (cta) {
+    const a = document.createElement("a");
+    a.href = cta.href;
+    a.textContent = cta.label;
+    box.append(document.createElement("br"), a);
+  }
+  return box;
+}
+
 async function renderRshares(): Promise<void> {
   const box = $("revlist") as HTMLElement;
   box.textContent = "";
@@ -840,10 +1002,7 @@ async function renderRshares(): Promise<void> {
   if (!res.ok) return;
   const rows = (await res.json()) as RevRow[];
   if (rows.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "hint";
-    empty.textContent = "No reverse shares yet - create a drop link above.";
-    box.append(empty);
+    box.append(emptyState("no drop links yet", "create one above and send it to whoever should upload to you"));
     return;
   }
   for (const r of rows) {
@@ -853,38 +1012,24 @@ async function renderRshares(): Promise<void> {
     const uplink = r.pass
       ? location.origin + "/r/" + r.slug
       : location.origin + "/r/" + r.slug + (keyB64 ? "#" + keyB64 : "");
+    const valid = r.pass || keyB64 !== "";
 
-    const row = document.createElement("div");
-    row.className = "revrow";
-
-    // head: open-arrow (shares-tab language: leftmost icon opens the link) +
-    // chevron + slug + meta + icon actions
-    const head = document.createElement("div");
-    head.className = "revhead";
-    const open = document.createElement("a");
-    open.className = "reviconlink";
-    open.href = uplink;
-    open.title = "Open drop link";
-    open.setAttribute("aria-label", "Open drop link");
-    open.target = "_blank";
-    open.rel = "noopener";
-    open.innerHTML = IC.open; // static icon markup only
-    const chev = iconBtn("Uploaded files", IC.chev, "rowicon chev");
-    chev.setAttribute("aria-expanded", "false");
-    const slug = document.createElement("button");
-    slug.type = "button";
-    slug.className = "revslug";
-    slug.textContent = "/" + r.slug;
-    const stats = document.createElement("span");
-    stats.className = "revmeta";
-    stats.textContent = r.uploads === 0 ? "awaiting files" : `${r.uploads} file${r.uploads === 1 ? "" : "s"}`;
-    const acts = document.createElement("span");
-    acts.className = "revacts";
+    const name = document.createElement("button");
+    name.type = "button";
+    name.textContent = "/" + r.slug;
+    const chips: HTMLElement[] = [];
+    if (r.pass) chips.push(chip("passphrase", "accent"));
+    if (!valid) chips.push(chip("key missing", "burn"));
+    // text-only arrivals carry no byte size - a "0 B" total would read as empty
+    const files =
+      r.uploads === 0
+        ? "awaiting files"
+        : `${r.uploads} file${r.uploads === 1 ? "" : "s"}` + (r.bytes > 0 ? ` · ${humanSize(r.bytes)}` : "");
     const cp = iconBtn("Copy drop link", IC.copy);
     cp.addEventListener("click", () => void copy(uplink, cp));
-    const del = iconBtn("Delete reverse share", IC.del, "rowicon danger");
+    const del = iconBtn("Delete drop link", IC.del, "rowicon danger");
     del.addEventListener("click", () => {
-      if (!confirm("Delete this reverse share? The link dies and all collected files are removed.")) return;
+      if (!confirm("Delete this drop link? The link dies and all collected files are removed.")) return;
       del.disabled = true;
       void (async () => {
         const res = await fetch("/api/rshare/" + r.slug, { method: "DELETE" });
@@ -902,37 +1047,38 @@ async function renderRshares(): Promise<void> {
         await renderRshares();
       })();
     });
-    acts.append(cp, del);
-    head.append(open, chev, slug, stats, acts);
-    row.append(head);
+    const chev = iconBtn("Show uploads", IC.chev, "rowicon chev");
+    chev.setAttribute("aria-expanded", "false");
+    const row = itemRow(
+      IC.inbox,
+      name,
+      chips,
+      `${files} · ${expiryText(r.expires)} · max ${humanSize(r.maxSize)}`,
+      [cp, openLink(uplink, "Open drop link"), del, chev],
+    );
 
-    // collapsible detail: uplink row + full meta + arrivals
+    // collapsible detail: the drop link itself, key repair, arrivals
     const detail = document.createElement("div");
-    detail.className = "revdetail hidden";
-    const metaRow = document.createElement("div");
-    metaRow.className = "srow revup";
-    const metaInfo = document.createElement("span");
-    metaInfo.className = "revuplink";
-    metaInfo.textContent =
-      (r.pass ? "passphrase mode (share the passphrase over another channel)" : "key-link mode") +
-      ` · max ${humanSize(r.maxSize)} · expires ${expiryText(r.expires).replace(/^in /, "")}`;
-    metaRow.append(metaInfo);
-    detail.append(metaRow);
-    const ul = document.createElement("div");
-    ul.className = "srow revup";
-    const lk = document.createElement("span");
-    lk.className = "revuplink";
-    lk.textContent = uplink;
-    const valid = r.pass || keyB64;
-    ul.append(lk);
-    detail.append(ul);
+    detail.className = "itemdetail hidden";
+    const linkLabel = document.createElement("span");
+    linkLabel.className = "detaillabel";
+    linkLabel.textContent = r.pass ? "drop link - share the passphrase over another channel" : "drop link - the key rides the #fragment";
+    const field = document.createElement("div");
+    field.className = "linkfield";
+    const linkInput = document.createElement("input");
+    linkInput.type = "text";
+    linkInput.readOnly = true;
+    linkInput.value = uplink;
+    linkInput.setAttribute("aria-label", "drop link");
+    linkInput.addEventListener("focus", () => linkInput.select());
+    field.append(linkInput);
+    detail.append(linkLabel, field);
     if (!valid) {
       const warn = document.createElement("span");
       warn.className = "revwarn";
-      warn.textContent = "key missing on this browser - paste the original drop link below";
-      ul.append(warn);
+      warn.textContent = "this browser lost the key - paste the original drop link (or its #key) to read arrivals here";
       const fix = document.createElement("div");
-      fix.className = "srow revup revfix";
+      fix.className = "revfix";
       const inp = document.createElement("input");
       inp.type = "text";
       inp.placeholder = "paste the drop link or just the #key";
@@ -940,8 +1086,7 @@ async function renderRshares(): Promise<void> {
       inp.spellcheck = false;
       const repair = document.createElement("button");
       repair.type = "button";
-      repair.className = "rowcopy";
-      repair.textContent = "repair";
+      repair.textContent = "Repair";
       repair.addEventListener("click", () => {
         // recovery: the key never left the sender-side links, so it has to
         // come back from wherever one still lives (chat, another device)
@@ -955,32 +1100,40 @@ async function renderRshares(): Promise<void> {
         void renderRshares();
       });
       fix.append(inp, repair);
-      detail.append(fix);
+      detail.append(warn, fix);
     }
+    const arrLabel = document.createElement("span");
+    arrLabel.className = "detaillabel";
+    arrLabel.textContent = r.items.length === 0 ? "arrivals - nothing uploaded yet" : "arrivals";
+    detail.append(arrLabel);
     for (const it of r.items) {
       const ar = document.createElement("div");
-      ar.className = "srow revarrival";
-      const fid = document.createElement("a");
-      fid.textContent = "/p/" + it.id.slice(0, 6) + "…";
-      if (r.pass || keyB64) {
+      ar.className = "subrow";
+      const ico = document.createElement("span");
+      ico.className = "subico";
+      ico.innerHTML = it.size > 0 ? IC.files : IC.text; // static icon markup only
+      const fid = document.createElement(valid ? "a" : "span");
+      fid.textContent = "/p/" + it.id;
+      if (fid instanceof HTMLAnchorElement) {
         fid.href = location.origin + "/p/" + it.id + (r.pass ? "" : "#" + keyB64);
+        fid.target = "_blank";
+        fid.rel = "noopener";
       } else {
         fid.className = "missing";
       }
-      fid.title = it.id;
       const fsize = document.createElement("span");
-      fsize.className = "swhen";
+      fsize.className = "subsize";
       fsize.textContent = it.size > 0 ? humanSize(it.size) : "text";
-      ar.append(fid, fsize);
+      ar.append(ico, fid, fsize);
       detail.append(ar);
     }
     const toggle = (): void => {
-      const open = detail.classList.toggle("hidden");
-      chev.classList.toggle("open", !open);
-      chev.setAttribute("aria-expanded", String(!open));
+      const closed = detail.classList.toggle("hidden");
+      chev.classList.toggle("open", !closed);
+      chev.setAttribute("aria-expanded", String(!closed));
     };
     chev.addEventListener("click", toggle);
-    slug.addEventListener("click", toggle);
+    name.addEventListener("click", toggle);
     row.append(detail);
     box.append(row);
   }
@@ -992,19 +1145,24 @@ async function loadDash(): Promise<void> {
   const accountsOff = me.accounts === false;
   const anon = !me.name;
   $("dashhead").classList.toggle("hidden", anon);
-  $("dashrows").classList.toggle("hidden", anon);
   $("dashanon").classList.toggle("hidden", !anon);
   $("dashedit").classList.toggle("hidden", anon);
   if (anon) {
+    const title = $("dashanon").querySelector(":scope > b") as HTMLElement;
+    // registration closed: only the sign-in path is real on this card
+    const canRegister = !accountsOff && me.open !== false;
+    $("dashcreate").classList.toggle("hidden", !canRegister);
     if (accountsOff) {
       // no sign-in button, no invite: the instance runs anonymous-only
       $("dashlogin").classList.add("hidden");
-      ($("dashanon").querySelector(":scope > b") as HTMLElement).textContent = "anonymous paste box";
+      title.textContent = "anonymous paste box";
       $("dashanontext").textContent = "This instance runs anonymous-only - accounts are disabled. Every paste stands on its own link and expiry.";
     } else {
       $("dashlogin").classList.remove("hidden");
-      ($("dashanon").querySelector(":scope > b") as HTMLElement).textContent = "your shares live here";
-      $("dashanontext").textContent = "Create an account or sign in with a passkey to see, copy and delete your active shares.";
+      title.textContent = "your shares live here";
+      $("dashanontext").textContent = canRegister
+        ? "Create an account or sign in with a passkey to see, copy and delete your active shares."
+        : "Sign in with your passkey to see, copy and delete your active shares.";
     }
     $("dashtabs").classList.add("hidden");
     $("dashpanes").classList.add("hidden");
@@ -1015,77 +1173,55 @@ async function loadDash(): Promise<void> {
   $("dashtabs").classList.remove("hidden");
   $("dashpanes").classList.remove("hidden");
   isAdmin = me.admin === true;
+  meId = me.id ?? "";
   syncAdminTab();
   void renderRshares().catch(() => {
     dashError("could not list reverse shares");
   });
+  if (isAdmin) void renderAdmins(); // needs meId for the "you" marker
 
   const nameBox = $("dashname") as HTMLInputElement;
   nameBox.value = me.name ?? "";
   const list = $("passkeylist") as HTMLElement;
   list.textContent = "";
-  for (const id of me.passkeys ?? []) {
-    const row = document.createElement("div");
-    row.className = "passrow";
-    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg") as SVGSVGElement;
-    icon.setAttribute("viewBox", "0 0 24 24");
-    icon.setAttribute("fill", "none");
-    icon.setAttribute("aria-hidden", "true");
-    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    p.setAttribute("d", "M12 17v2M20 4a2 2 0 0 0-2 1.4L10.9 13a3 3 0 1 0 2.1 2.1L21 7.1A2 2 0 0 0 20 4");
-    p.setAttribute("stroke", "currentColor");
-    p.setAttribute("stroke-width", "2");
-    p.setAttribute("stroke-linecap", "round");
-    p.setAttribute("stroke-linejoin", "round");
-    icon.append(p);
-    const code = document.createElement("code");
-    code.textContent = id.length > 14 ? id.slice(0, 11) + "…" : id;
-    code.title = id;
-    row.append(icon, code);
-    list.append(row);
-  }
-  if ((me.passkeys ?? []).length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "hint";
-    empty.textContent = "No passkeys registered yet.";
-    list.append(empty);
-  }
+  const keys = me.passkeys ?? [];
+  keys.forEach((id, i) => {
+    const name = document.createElement("span");
+    name.textContent = keys.length === 1 ? "passkey" : `passkey ${i + 1}`;
+    name.title = id;
+    list.append(itemRow(IC.key, name, [], "credential " + (id.length > 20 ? id.slice(0, 18) + "…" : id), []));
+  });
+  if (keys.length === 0) list.append(emptyState("no passkeys yet", "add one to sign in from this device"));
+
   const rowsBox = $("dashrows") as HTMLElement;
   rowsBox.textContent = "";
   const res = await fetch("/api/shares");
   const rows = (await res.json()) as ShareRow[];
+  const count = $("sharecount");
+  count.textContent = `${rows.length} active`;
+  count.classList.toggle("hidden", rows.length === 0);
   if (rows.length === 0) {
-    rowsBox.textContent = "";
-    const empty = document.createElement("div");
-    empty.className = "hint";
-    empty.textContent = "Nothing active yet - share a paste or file bundle while signed in.";
-    rowsBox.appendChild(empty);
+    rowsBox.append(
+      emptyState("no active shares", "share a paste or a file bundle while signed in and it shows up here", {
+        href: "/",
+        label: "create a paste",
+      }),
+    );
     return;
   }
   for (const r of rows) {
-    // same row language as the reverse pane: open-with-arrow icon + compact
-    // meta + icon actions; fits one line on phones
-    const row = document.createElement("div");
-    row.className = "revrow";
-    const link = document.createElement("a");
-    link.className = "reviconlink";
-    link.href = shareURL(r);
-    link.title = "Open share (" + (r.kind === "bundle" ? "files" : "text") + ")";
-    link.setAttribute("aria-label", "Open share");
-    link.target = "_blank";
-    link.rel = "noopener";
-    link.innerHTML = IC.open; // static icon markup only
-    const meta = document.createElement("span");
-    meta.className = "revmeta";
-    meta.textContent =
-      (r.kind === "bundle" ? "files" : "text") +
-      (r.public ? " · public" : "") +
-      ` · ${r.views ?? 0} view${(r.views ?? 0) === 1 ? "" : "s"}` +
-      (r.burn ? " · burn after reading" : ` · ${expiryText(r.expires).replace(/^in /, "")}`);
-    const acts = document.createElement("span");
-    acts.className = "revacts";
+    const url = shareURL(r);
+    const name = document.createElement("a");
+    name.href = url;
+    name.target = "_blank";
+    name.rel = "noopener";
+    name.textContent = r.kind === "bundle" ? "file bundle" : "text paste";
+    const chips: HTMLElement[] = [];
+    if (r.burn) chips.push(chip("burn after reading", "burn"));
+    if (r.public) chips.push(chip("public", "accent"));
+    const views = r.views ?? 0;
     const cp = iconBtn("Copy share link", IC.copy);
-    cp.addEventListener("click", () => void copy(shareURL(r), cp));
+    cp.addEventListener("click", () => void copy(url, cp));
     const del = iconBtn("Delete share", IC.del, "rowicon danger");
     del.addEventListener("click", () => {
       if (!confirm("Delete this share? The link stops working for everyone, including you.")) return;
@@ -1100,11 +1236,14 @@ async function loadDash(): Promise<void> {
         await loadDash(); // rows recompute live; the deleted one is gone
       })();
     });
-    acts.append(cp, del);
-    const head = document.createElement("div");
-    head.className = "revhead";
-    head.append(link, meta, acts);
-    row.append(head);
-    rowsBox.append(row);
+    rowsBox.append(
+      itemRow(
+        r.kind === "bundle" ? IC.files : IC.text,
+        name,
+        chips,
+        `/p/${r.id} · ${views} view${views === 1 ? "" : "s"} · ${expiryText(r.expires)}`,
+        [cp, openLink(url, "Open share"), del],
+      ),
+    );
   }
 }

@@ -252,164 +252,181 @@
     <img id="imgboximg" alt="image preview">
   </dialog>
 
-  <!-- dashboard (/dash): the standard header/footer/popovers stay; cards swap here -->
+  <!-- dashboard (/dash): the standard header/footer/popovers stay; cards swap here.
+       One list language everywhere (.item: icon tile + title + meta + actions),
+       pane heads carry the explanations, config splits draft settings from
+       live people controls -->
   <section id="dashroot" class="hidden">
     <div class="dashhead" id="dashhead">
-      <div id="dashtabs" class="dashtabs hidden">
-        <button type="button" class="dashtab active" data-tab="shares">shares</button>
-        <button type="button" class="dashtab" data-tab="reverse">reverse</button>
-        <button type="button" class="dashtab" data-tab="account">account</button>
-        <button type="button" id="tabconfig" class="dashtab" data-tab="config">config</button>
-        <a href="/" class="dashtab dashtab-new">new paste</a>
-      </div>
+      <nav id="dashtabs" class="dashtabs hidden" aria-label="dashboard sections">
+        <div class="segtabs">
+          <button type="button" class="dashtab active" data-tab="shares">shares</button>
+          <button type="button" class="dashtab" data-tab="reverse">reverse</button>
+          <button type="button" class="dashtab" data-tab="account">account</button>
+          <button type="button" id="tabconfig" class="dashtab" data-tab="config">config</button>
+        </div>
+        <a href="/" class="dashnew" aria-label="new paste"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg><span>new paste</span></a>
+      </nav>
     </div>
     <div id="dasherr" class="hint danger hidden"></div>
     <div id="dashanon" class="unlockbox hidden">
       <svg class="lockring" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" ry="2"></rect><path d="M8 11V7a4 4 0 0 1 7.8-1.3"></path></svg>
       <b>your shares live here</b>
       <p id="dashanontext">Create an account or sign in with a passkey to see, copy and delete your active shares.</p>
-      <button type="button" class="primary" id="dashlogin">Sign in with passkey</button>
+      <div class="unlockacts">
+        <button type="button" class="primary" id="dashlogin">Sign in with passkey</button>
+        <button type="button" id="dashcreate">Create account</button>
+      </div>
     </div>
     <div id="dashpanes" class="hidden">
       <div id="pane-shares" class="dashpane">
         <div class="card dashcard">
-          <div id="dashrows" class="hidden"></div>
-          <div class="hint">Links carry the decryption key in the fragment; the server cannot read any of them. Rows vanish when a share expires or burns.</div>
+          <div class="panehead">
+            <div><b>active shares</b><small>links carry the key in their fragment - the server cannot read any of them</small></div>
+            <span id="sharecount" class="chipmeta hidden"></span>
+          </div>
+          <div id="dashrows" class="itemlist"></div>
         </div>
       </div>
       <div id="pane-reverse" class="dashpane hidden">
         <div class="card dashcard">
+          <div class="panehead">
+            <div><b>drop links</b><small>friends upload to you through a link - encrypted with the link's own key, the server stores ciphertext only</small></div>
+          </div>
           <form id="revform" class="revform">
-            <b class="revformhead">add new reverse share</b>
-            <div class="accrow">
-              <input type="text" id="revslug" maxlength="32" placeholder="slug - e.g. trip-photos" autocomplete="off" autocapitalize="off" spellcheck="false">
-              <input type="text" id="revttl" value="7d" aria-label="link expiry" autocomplete="off" autocapitalize="off" spellcheck="false">
-              <input type="text" id="revsize" value="100" aria-label="max file size in MB" autocomplete="off" spellcheck="false">
+            <div class="revgrid">
+              <label class="field"><span class="field-label">slug</span><input type="text" id="revslug" maxlength="32" placeholder="trip-photos" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+              <label class="field"><span class="field-label">expires</span><input type="text" id="revttl" value="7d" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+              <label class="field"><span class="field-label">max MB</span><input type="text" id="revsize" value="100" inputmode="numeric" autocomplete="off" spellcheck="false"></label>
             </div>
-            <div class="accrow">
-              <input type="password" id="revpass" placeholder="passphrase (optional) - share it over another channel" autocomplete="new-password" aria-label="passphrase">
-            </div>
-            <div class="accrow revactions">
+            <div class="revpassrow">
+              <label class="field"><span class="field-label">passphrase (optional)</span><input type="password" id="revpass" placeholder="share it over another channel" autocomplete="new-password"></label>
               <button type="submit" class="primary" id="revcreate">Create drop link</button>
             </div>
           </form>
-          <div id="revlist"></div>
-          <div class="hint">Visitors open the drop link and upload files to you - encrypted with the link's own key, so the server stores ciphertext only. Set a passphrase for a clean bare link: visitors type it once; share it over another channel. Arrivals show up as rows above and live until the inbox expires.</div>
+          <div class="sechead">your drop links</div>
+          <div id="revlist" class="itemlist"></div>
         </div>
       </div>
       <div id="pane-account" class="dashpane hidden">
         <div class="card dashcard">
           <div class="dashedit" id="dashedit">
-            <b>display name</b>
-            <div class="accrow">
+            <div class="panehead">
+              <div><b>your account</b><small>a passkey is the whole account - no password, no email</small></div>
+            </div>
+            <div class="sechead">profile</div>
+            <label class="field-label" for="dashname">display name</label>
+            <div class="inlinerow">
               <input type="text" id="dashname" maxlength="64" placeholder="display name" autocomplete="off">
-              <button type="button" id="dashsave">Save name</button>
+              <button type="button" id="dashsave">Save</button>
             </div>
-            <div class="dashpass">
-              <b>passkeys</b>
-              <div id="passkeylist"></div>
-              <button type="button" id="dashreg">Add passkey</button>
-            </div>
+            <div class="sechead">passkeys</div>
+            <div id="passkeylist" class="itemlist"></div>
+            <button type="button" id="dashreg" class="addbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add passkey</button>
           </div>
         </div>
       </div>
       <div id="pane-config" class="dashpane hidden">
         <div class="card dashcard" id="confedit">
-          <div class="cfghead">
-            <b>instance configuration</b>
-            <p>Saved to <code>data/config.json</code> on the server and loaded on the next boot - the file wins over compose env, so values go live after <b>Save + reboot</b></p>
+          <div class="panehead">
+            <div><b>instance settings</b><small>saved to <code>data/config.json</code> - the file beats compose env, and the running server picks it up after a reboot</small></div>
           </div>
           <div id="cfgbody">
-            <div class="cfgsection">
-            <b>who can paste</b>
-            <div class="cfgchoice" id="cfgaccess">
+            <div class="sechead">who can paste</div>
+            <div class="tiles" id="cfgaccess">
               <label class="cfgopt">
                 <input type="radio" name="zpaccess" value="open">
-                <span class="opttext"><b>anyone</b><small>open instance - visitors paste right away</small></span>
+                <span class="opttext"><b>anyone</b><small>visitors paste right away</small></span>
               </label>
               <label class="cfgopt">
                 <input type="radio" name="zpaccess" value="passphrase">
-                <span class="opttext"><b>gate passphrase</b><small>visitors unlock the compose screen with a shared passphrase first</small></span>
+                <span class="opttext"><b>gate passphrase</b><small>a shared passphrase unlocks compose</small></span>
               </label>
               <label class="cfgopt">
                 <input type="radio" name="zpaccess" value="members">
-                <span class="opttext"><b>members only</b><small>pasting needs a passkey sign-in - reading stays open</small></span>
+                <span class="opttext"><b>members only</b><small>pasting needs a passkey sign-in</small></span>
               </label>
             </div>
-            <div class="cfgrow hidden" id="cfgkeyrow">
-              <label for="cfgcreate" class="cfglabel">gate passphrase</label>
-              <button type="button" id="cfgclear" class="cfgclear" title="clear the create-gate passphrase">✕</button>
-              <input type="password" id="cfgcreate" placeholder="unchanged" autocomplete="off">
+            <div class="setfield hidden" id="cfgkeyrow">
+              <label class="field-label" for="cfgcreate">gate passphrase</label>
+              <input type="password" id="cfgcreate" autocomplete="new-password">
             </div>
-            <div class="cfgrow">
-              <label for="cfgpublic" class="cfglabel">allow plaintext public pastes</label>
+            <div class="setrow hidden" id="cfgforgetrow">
+              <div class="settext"><b>forget the stored gate passphrase</b><small>removes the old key from data/config.json on save</small></div>
+              <button type="button" id="cfgforget" class="switch" role="switch" aria-checked="false" aria-label="forget the stored gate passphrase"></button>
+            </div>
+            <div class="setrow">
+              <div class="settext"><b>allow plaintext public pastes</b><small>signed-in users may share unencrypted - anyone with the link reads it</small></div>
               <button type="button" id="cfgpublic" class="switch" role="switch" aria-checked="true" aria-label="allow plaintext public pastes"></button>
             </div>
-            <div class="hint">Plaintext pastes carry no encryption: anyone with the link reads them in the clear. Creation stays account-only and the server stores exactly what was sent.</div>
-            </div>
-            <div class="cfgsection">
-            <b>accounts</b>
-            <div class="cfgchoice" id="cfgregroup">
+            <div class="sechead">sign-up</div>
+            <div class="tiles" id="cfgregroup">
               <label class="cfgopt">
                 <input type="radio" name="zpreg" value="open">
-                <span class="opttext"><b>open sign-up</b><small>anyone can create an account with a passkey</small></span>
+                <span class="opttext"><b>open</b><small>anyone can create an account</small></span>
               </label>
               <label class="cfgopt">
                 <input type="radio" name="zpreg" value="first">
-                <span class="opttext"><b>closes after first account</b><small>first-user bootstrap - the instance belongs to whoever registers first</small></span>
+                <span class="opttext"><b>first account only</b><small>closes after the first sign-up</small></span>
               </label>
               <label class="cfgopt">
                 <input type="radio" name="zpreg" value="invite">
-                <span class="opttext"><b>invite links only</b><small>sign-up is closed - invite links below unlock registration for one friend each</small></span>
+                <span class="opttext"><b>invite links only</b><small>closed - invites below let friends in</small></span>
               </label>
             </div>
-            <div class="hint">admins - the first registered account owns the instance; promote friends here. The last admin can never be demoted.</div>
-            <div id="cfgadmins"></div>
+            <div class="sechead">limits</div>
+            <div class="limits">
+              <label class="limit">
+                <span class="field-label">max ttl</span>
+                <span class="unitfield"><input type="number" id="cfgttl" min="1" max="366" step="1" inputmode="numeric"><span>days</span></span>
+                <small>1 to 366</small>
+              </label>
+              <label class="limit">
+                <span class="field-label">shares per account</span>
+                <span class="unitfield"><input type="number" id="cfgshares" min="0" max="100000" step="1" inputmode="numeric"><span>shares</span></span>
+                <small>0 = unlimited</small>
+              </label>
+              <label class="limit">
+                <span class="field-label">max upload</span>
+                <span class="unitfield"><input type="number" id="cfgupload" min="1" max="65536" step="any" inputmode="decimal"><span>MB</span></span>
+                <small>ciphertext per bundle</small>
+              </label>
+              <label class="limit">
+                <span class="field-label">chunk size</span>
+                <span class="unitfield"><input type="number" id="cfgchunk" min="0.0625" max="64" step="any" inputmode="decimal"><span>MB</span></span>
+                <small>per upload request, at most max upload</small>
+              </label>
             </div>
-          <div class="cfgsection">
-            <b>limits</b>
-            <div class="cfgrow">
-              <label for="cfgttl" class="cfglabel">max ttl (days)</label>
-              <input type="number" id="cfgttl" min="1" max="366" step="1" inputmode="numeric">
-            </div>
-            <div class="cfgrow">
-              <label for="cfgshares" class="cfglabel">max shares per account (0 = unlimited)</label>
-              <input type="number" id="cfgshares" min="0" max="100000" step="1" inputmode="numeric">
-            </div>
-            <div class="cfgrow">
-              <label for="cfgupload" class="cfglabel">max upload (bytes)</label>
-              <input type="number" id="cfgupload" min="1048576" max="68719476736" step="1048576" inputmode="numeric">
-            </div>
-            <div class="cfgrow">
-              <label for="cfgchunk" class="cfglabel">chunk size (bytes)</label>
-              <input type="number" id="cfgchunk" min="65536" max="67108864" step="65536" inputmode="numeric">
-            </div>
-          </div>
-          <div class="cfgsection" id="cfginvsec">
-            <b>invites</b>
-            <div class="hint">When registration is closed or the instance is locked, an invite link is the only way a friend creates an account: they open it once, register their passkey, done. A link dies after its last use or when you revoke it.</div>
-            <div class="cfgrow">
-              <label for="invcfg" class="cfglabel">new link uses</label>
-              <input type="number" id="invcfg" min="1" max="100" step="1" value="1" inputmode="numeric">
-              <button type="button" id="invcreate" class="rowcopy">create invite link</button>
-            </div>
-            <div id="inviteout" class="inviteout hidden">
-              <input type="text" id="invitelink" readonly aria-label="invite link">
-              <button type="button" id="invcopy" class="rowcopy" aria-label="Copy invite link">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-            </div>
-            <div id="invitelist"></div>
-          </div>
-          <div class="accrow cfgactions">
-            <button type="button" id="cfgsave">Save</button>
-            <button type="button" class="primary" id="cfgapply">Save + reboot</button>
-          </div>
           </div>
           <div id="cfgerr" class="hint danger hidden"></div>
-          <div id="cfgnote" class="hint hidden"></div>
+          <div class="cfgbar" id="cfgbar">
+            <span id="cfgnote" class="cfgstate">no unsaved changes</span>
+            <button type="button" id="cfgdiscard" class="hidden">Discard</button>
+            <button type="button" id="cfgsave" disabled>Save</button>
+            <button type="button" class="primary" id="cfgapply" disabled>Save + reboot</button>
+          </div>
         </div>
-      </div>
+        <div class="card dashcard" id="cfgpeople">
+          <div class="panehead">
+            <div><b>people</b><small>admin rights and invite links - changes here apply immediately</small></div>
+          </div>
+          <div class="sechead">admins</div>
+          <div id="cfgadmins" class="itemlist"></div>
+          <div class="sechead">invite links</div>
+          <div class="invmint">
+            <label class="field"><span class="field-label">uses per link</span><input type="number" id="invcfg" min="1" max="100" step="1" value="1" inputmode="numeric"></label>
+            <button type="button" id="invcreate">Create invite link</button>
+          </div>
+          <div id="inviteout" class="inviteout hidden">
+            <input type="text" id="invitelink" readonly aria-label="invite link">
+            <button type="button" id="invcopy" class="rowicon" aria-label="Copy invite link" title="Copy invite link">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+          </div>
+          <div id="invitelist" class="itemlist"></div>
+          <div class="hint">A friend opens the link once and registers a passkey - it works while sign-up is closed, and dies after its last use or when revoked.</div>
+          <div id="peopleerr" class="hint danger hidden"></div>
+        </div>
       </div>
     </div>
   </section>

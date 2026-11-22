@@ -3,7 +3,7 @@ name: docs
 on:
   push:
     branches: [main]
-    paths: ["docs/**", "rspress.config.ts", ".github/workflows/docs.yml"]
+    paths: ["docs/**", "theme/**", "rspress.config.ts", "package.json", "package-lock.json", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
 permissions:

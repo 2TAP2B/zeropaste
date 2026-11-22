@@ -4,10 +4,10 @@ A normal share sends something from you to a friend. A **reverse share** flips i
 
 ## the model
 
-1. On the dashboard's **reverse** tab you create an inbox: a slug (`my-inbox`), a ttl and an optional size cap.
+1. On the dashboard's **reverse** tab, fill in the form: a slug (`my-inbox`), when the link expires, a max size in MB, and optionally a passphrase.
 2. The result is a drop link: `https://your.site/r/my-inbox#<key>` - the uplink key rides the fragment, exactly like a paste.
 3. Friends open the link and upload files; every upload is an ordinary encrypted share created through the standard pipeline - the server never sees the key, so it cannot read arrivals.
-4. Your dashboard lists each inbox with its arrivals: file names, sizes, times - and links that decrypt locally.
+4. Your dashboard lists each inbox with file count, total size, expiry and cap; expand a row for the drop link itself and the arrivals - links that decrypt locally in your browser (file names stay inside the encrypted bundles).
 
 ## passphrase uplinks
 
@@ -22,4 +22,4 @@ Optionally protect an inbox with a passphrase instead of a fragment key: senders
 
 ## recovery of a lost key
 
-If your browser loses the stashed fragment key for an inbox, the dashboard shows a repair row: paste the original drop link back into this browser and the key re-stashes. Recreating the uplink is **not** a recovery - a fresh key orphans every upload already sent with the old one.
+If your browser loses the stashed fragment key for an inbox, its row carries a *key missing* chip and the expanded detail shows a repair field: paste the original drop link back into this browser and the key re-stashes. Recreating the uplink is **not** a recovery - a fresh key orphans every upload already sent with the old one.

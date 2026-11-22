@@ -8,6 +8,8 @@ export default defineConfig({
   title: "zeropaste",
   description: "zero-knowledge pastes - self-hosted, encrypted in your browser",
   icon: "/favicon.png",
+  logo: "/logo.svg", // the brand mark (same file as web/assets/icon.svg)
+  logoText: "zeropaste",
   llms: true, // llms.txt + markdown rendering for AI readers
   markdown: {
     link: {

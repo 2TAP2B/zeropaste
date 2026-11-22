@@ -11,17 +11,17 @@ Accounts are optional: anonymous pasting is the default and needs no cookie, no 
 
 ## the dashboard
 
-`/dash` (sign in via the header's account button) shows:
+`/dash` (sign in via the header's account button) is a tab bar - **shares**, **reverse**, **account**, **config** - plus a **new paste** shortcut. Every collection uses the same row: an icon tile, a title with status chips, a one-line meta, and icon actions.
 
-- **shares** - every active paste you created, with kind, views, expiry/burn and copy/delete;
-- **reverse** - your drop-link inboxes and arrivals ([see reverse shares](/guide/reverse-shares));
-- **account** - display name and passkey management;
-- **config** - the admin surface (below).
+- **shares** - every active paste you created: kind (text paste / file bundle), chips for *burn after reading* and *public*, views and expiry, plus copy, open and delete;
+- **reverse** - a labeled form for new drop links and your inboxes with arrivals ([see reverse shares](/guide/reverse-shares));
+- **account** - display name and your passkeys (add another one here - for example for a second device);
+- **config** - the admin surface (below), visible to admins only.
 
 ## admin rights
 
 - The **first registered account owns the instance**: it gets the admin flag and the config tab.
-- The admin promotes friends in the config card's ACCOUNTS section - one switch per identity. Demoting the **last** admin is refused, so the instance never loses its door.
+- The admin promotes friends in the config tab's **people** card - one switch per identity, your own row marked *you*. Promotions apply immediately. Demoting the **last** admin is refused, so the instance never loses its door.
 - Owner transfer = promote a friend, then demote yourself.
 - Existing instances that predate the flag migrate at boot: with no admin found, the **oldest identity** is promoted (the boot log names it); `ADMIN_ID=<identity id>` picks explicitly instead.
 
@@ -33,7 +33,7 @@ The real emergency hatch is the same as always: anyone with access to the server
 
 When registration is closed or the instance is locked, invite links let a friend in anyway:
 
-1. In the config card's INVITES section, mint a link (single- or multi-use).
+1. In the config tab's **people** card, under *invite links*, set the uses per link and create one (every row has a copy button for its link).
 2. The friend opens `https://your.site/#invite=<token>` once - the token sticks in their tab.
 3. They register their passkey; the link dies after its last use or when you revoke it.
 

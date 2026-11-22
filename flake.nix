@@ -16,7 +16,7 @@
 
       devShells.${system}.default = pkgs.mkShell {
         packages = with pkgs; [
-          go
+          go_1_26 # same line as package.nix and the docker builder (golang:1.26-alpine)
           git
           ripgrep
           nodejs # typescript runner (tsc)
