@@ -12,7 +12,7 @@
 # go.mod and the docker builder (golang:1.26-alpine).
 (buildGoModule.override { go = go_1_26; }) rec {
   pname = "zeropaste";
-  version = "0.12.5";
+  version = "0.12.6";
   src = ./.;
   # real vendor hash: Go now has the go-webauthn dependency
   vendorHash = "sha256-9/wut8nmHfRSwoTUxf1YgdFqggGe+eh9YCzLLpFFaUU=";
