@@ -12,10 +12,15 @@
 # go.mod and the docker builder (golang:1.26-alpine).
 (buildGoModule.override { go = go_1_26; }) rec {
   pname = "zeropaste";
-  version = "0.12.6";
-  src = ./.;
-  # real vendor hash: Go now has the go-webauthn dependency
-  vendorHash = "sha256-9/wut8nmHfRSwoTUxf1YgdFqggGe+eh9YCzLLpFFaUU=";
+  version = "0.12.7";
+  # explicit fileset, not ./.: a non-flake build (callPackage from a working
+  # tree) would otherwise copy data/ - incl. the HMAC key in .session.key -
+  # into the world-readable nix store. main_test.go: the check phase runs it.
+  src = lib.fileset.toSource {
+    root = ./.;
+    fileset = lib.fileset.unions [ ./go.mod ./go.sum ./main.go ./main_test.go ./web ];
+  };
+  vendorHash = "sha256-/sckFq+bXreF8uR4Y2KC3Q/I6mQ5LPUMrALo01NXVO8=";
 
   env.CGO_ENABLED = "0";
   # the footer shows the installed version; nix checkouts have no .git either

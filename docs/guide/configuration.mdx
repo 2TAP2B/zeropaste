@@ -42,6 +42,8 @@ Switch. Off (the default is on) drops the plaintext-lane slider from compose; pu
 
 The UI shows sizes in MB (MiB) while the API and the file store bytes; an untouched size field sends its exact stored byte count back, so the display rounding never changes a value. Cross-checked: chunk ≤ max upload, enforced on the merged next-boot pair.
 
+Independent of the knobs, the server keeps **512 MiB free** on the data volume: a create or upload that would cross that floor answers `507 storage is full` (reads and deletes keep working). It protects the host and the identity/config writes from an anonymous uploader filling the disk.
+
 ## environment variables
 
 Env vars keep working as first-boot layers - after one admin save the file owns a knob until the file is deleted.
@@ -60,7 +62,7 @@ Env vars keep working as first-boot layers - after one admin save the file owns 
 | `MAX_SHARES_PER_ACCOUNT` | `0` | per-identity active share cap |
 | `MAX_UPLOAD` | `104857600` | total ciphertext per bundle |
 | `CHUNK` | `8388608` | per-request chunk |
-| `SESSION_SECRET` | auto | HMAC secret for session cookies (else `data/.session.key`, auto-generated) |
+| `SESSION_SECRET` | auto | HMAC secret for session cookies, **at least 32 bytes** (shorter → the server refuses to start). When set it wins over `data/.session.key` and is never written to disk; unset, a random key is generated into that file. Changing it signs every session out |
 | `ADMIN_ID` | auto | names the admin identity id explicitly for the boot migration |
 
 ## precedence details

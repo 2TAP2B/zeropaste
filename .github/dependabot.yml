@@ -1,0 +1,66 @@
+# Dependabot: version updates for every ecosystem this repo carries. Security
+# updates (alerts -> PRs) are a repo setting and skip the cooldowns below.
+#
+# Not covered by Dependabot: the Go toolchain/stdlib. It ships via the pinned
+# golang image in the Dockerfile (bumped by the docker entry below) and the
+# nixpkgs go_1_26 package (bumped by the nix entry); ci.yml runs govulncheck
+# daily against both toolchains, so a new stdlib advisory fails CI even when
+# nothing here moved.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps(go)
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: daily # a golang patch release is usually a security release
+    cooldown:
+      default-days: 3
+      exclude: ["golang"]
+    ignore:
+      # stay on the Go 1.26 line (go.mod, nix go_1_26) until a deliberate move
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    commit-message:
+      prefix: deps(docker)
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps(actions)
+
+  # docs site only (rspress) - never part of the binary
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      docs-site:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps(docs)
+
+  # flake.lock (nixpkgs): the dev shell and the nix package's go_1_26
+  - package-ecosystem: nix
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps(nix)

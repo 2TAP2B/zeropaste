@@ -2,6 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,8 +15,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 func server(t *testing.T) *httptest.Server {
@@ -1876,8 +1885,8 @@ func TestAdminConfigRestartFlow(t *testing.T) {
 	h := build(dir, "")
 	cookie := sessionCookieFor(s)
 
-	calls := 0
-	restartServer = func() { calls++ }
+	var calls atomic.Int32 // the hook fires on adminApply's goroutine
+	restartServer = func() { calls.Add(1) }
 	defer func() { restartServer = nil }()
 
 	if rec := adminDo(h, "POST", "/api/admin/apply", "", cookie); rec.Code != 200 {
@@ -1887,12 +1896,12 @@ func TestAdminConfigRestartFlow(t *testing.T) {
 	if rec := adminDo(h, "POST", "/api/admin/apply", "", cookie); rec.Code != 409 {
 		t.Fatalf("double apply: got %d, want 409", rec.Code)
 	}
-	if calls != 0 {
+	if calls.Load() != 0 {
 		t.Fatal("restart hook fired before its 300ms grace window")
 	}
 	time.Sleep(600 * time.Millisecond)
-	if calls != 1 {
-		t.Fatalf("restart hook fired %d times, want exactly 1", calls)
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("restart hook fired %d times, want exactly 1", n)
 	}
 }
 
@@ -2403,5 +2412,758 @@ func TestLockedAdminPersistence(t *testing.T) {
 	h = build(dir, "")
 	if rec = get(h, "/api/gate"); !strings.Contains(rec.Body.String(), `"locked":false`) {
 		t.Fatalf("fresh boot must see file open mode: %s", rec.Body)
+	}
+}
+
+// ---- security hardening suite: abuse cases first (AGENTS.md §10) ----
+
+// softKey is a software passkey (ECDSA P-256, "none" attestation) so the real
+// go-webauthn registration ceremony runs in-process.
+type softKey struct {
+	priv   *ecdsa.PrivateKey
+	credID []byte
+}
+
+func newSoftKey(t *testing.T) *softKey {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := make([]byte, 16)
+	if _, err := rand.Read(id); err != nil {
+		t.Fatal(err)
+	}
+	return &softKey{priv: priv, credID: id}
+}
+
+// finishBody answers a register/begin challenge for RP "localhost".
+func (k *softKey) finishBody(t *testing.T, sid, challenge string) string {
+	t.Helper()
+	pub, err := k.priv.PublicKey.Bytes() // 0x04 || X || Y
+	if err != nil {
+		t.Fatal(err)
+	}
+	cose, err := webauthncbor.Marshal(map[int]any{1: 2, 3: -7, -1: 1, -2: pub[1:33], -3: pub[33:65]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rp := sha256.Sum256([]byte("localhost"))
+	auth := append([]byte{}, rp[:]...)
+	auth = append(auth, 0x45, 0, 0, 0, 0) // UP|UV|AT, signCount 0
+	auth = append(auth, make([]byte, 16)...)
+	auth = append(auth, byte(len(k.credID)>>8), byte(len(k.credID)))
+	auth = append(auth, k.credID...)
+	auth = append(auth, cose...)
+	att, err := webauthncbor.Marshal(map[string]any{"fmt": "none", "attStmt": map[string]any{}, "authData": auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdj, _ := json.Marshal(map[string]string{"type": "webauthn.create", "challenge": challenge, "origin": "http://localhost"})
+	b64 := base64.RawURLEncoding.EncodeToString
+	body, _ := json.Marshal(map[string]any{
+		"sessionId": sid, "id": b64(k.credID), "rawId": b64(k.credID), "type": "public-key",
+		"response": map[string]string{"clientDataJSON": b64(cdj), "attestationObject": b64(att)},
+	})
+	return string(body)
+}
+
+// ceremonyPost: passkey ceremonies need a domain RP ID (IP hosts are refused)
+func ceremonyPost(h http.Handler, path, body, cookie string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	req.Host = "localhost"
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func regBegin(t *testing.T, h http.Handler, body, cookie string) (sid, challenge string) {
+	t.Helper()
+	rec := ceremonyPost(h, "/api/identity/register/begin", body, cookie)
+	if rec.Code != 200 {
+		t.Fatalf("register begin: %d %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		SessionID string `json:"sessionId"`
+		Options   struct {
+			PublicKey struct {
+				Challenge string `json:"challenge"`
+			} `json:"publicKey"`
+		} `json:"options"`
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &out) != nil || out.SessionID == "" || out.Options.PublicKey.Challenge == "" {
+		t.Fatalf("register begin: bad options %s", rec.Body)
+	}
+	return out.SessionID, out.Options.PublicKey.Challenge
+}
+
+func regFinish(h http.Handler, body, cookie string) *httptest.ResponseRecorder {
+	return ceremonyPost(h, "/api/identity/register/finish", body, cookie)
+}
+
+// raceFinishes releases all finishes at once and returns their status codes.
+func raceFinishes(h http.Handler, bodies []string) []int {
+	codes := make([]int, len(bodies))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, b := range bodies {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			codes[i] = regFinish(h, b, "").Code
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return codes
+}
+
+// F1: attaching a passkey must not clear admin nor write back the stale
+// begin-time snapshot (a rename mid-ceremony survives)
+func TestAttachKeepsAdmin(t *testing.T) {
+	dir := t.TempDir()
+	s, ownerID := testAdmin(t, dir)
+	owner := loadIdentity(filepath.Join(dir, "identities"), ownerID)
+	owner.Creds = []webauthn.Credential{{ID: []byte("seed-credential-0001")}}
+	if err := s.saveIdentity(owner); err != nil {
+		t.Fatal(err)
+	}
+	h := build(dir, "")
+	cookie := sessionCookieForID(s, ownerID)
+	sid, ch := regBegin(t, h, `{}`, cookie)
+	if rec := postAs(t, h, "/api/identity/name", `{"name":"renamed-mid-ceremony"}`, cookie); rec.Code != 200 {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body)
+	}
+	if rec := regFinish(h, newSoftKey(t).finishBody(t, sid, ch), cookie); rec.Code != 200 {
+		t.Fatalf("attach finish: %d %s", rec.Code, rec.Body)
+	}
+	got := loadIdentity(filepath.Join(dir, "identities"), ownerID)
+	if got == nil || !got.Admin {
+		t.Fatalf("attach cleared admin: %+v", got)
+	}
+	if got.Name != "renamed-mid-ceremony" {
+		t.Fatalf("attach wrote back the begin snapshot: name %q", got.Name)
+	}
+	if len(got.Creds) != 2 {
+		t.Fatalf("want both credentials, got %d", len(got.Creds))
+	}
+}
+
+// identity-store mutex: concurrent first registrations elect exactly one admin
+func TestConcurrentFirstRegistrationOneAdmin(t *testing.T) {
+	dir := t.TempDir()
+	h := build(dir, "")
+	bodies := make([]string, 8)
+	for i := range bodies {
+		sid, ch := regBegin(t, h, `{"name":"racer"}`, "")
+		bodies[i] = newSoftKey(t).finishBody(t, sid, ch)
+	}
+	codes := raceFinishes(h, bodies)
+	admins := 0
+	for _, i := range listIdentities(filepath.Join(dir, "identities")) {
+		if i.Admin {
+			admins++
+		}
+	}
+	if admins != 1 {
+		t.Fatalf("%d admins after concurrent first registrations (codes %v), want 1", admins, codes)
+	}
+}
+
+// identity-store mutex: mutual demotion never leaves the instance without an admin
+func TestConcurrentDemotionKeepsAdmin(t *testing.T) {
+	dir := t.TempDir()
+	s, a := testAdmin(t, dir)
+	b := identity{ID: newSessionID(), Name: "second-admin", Admin: true}
+	if err := s.saveIdentity(&b); err != nil {
+		t.Fatal(err)
+	}
+	h := build(dir, "")
+	ca, cb := sessionCookieForID(s, a), sessionCookieForID(s, b.ID)
+	idents := filepath.Join(dir, "identities")
+	for round := 0; round < 50; round++ {
+		for _, id := range []string{a, b.ID} {
+			i := loadIdentity(idents, id)
+			i.Admin = true
+			if err := s.saveIdentity(i); err != nil {
+				t.Fatal(err)
+			}
+		}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for _, c := range []struct{ target, cookie string }{{b.ID, ca}, {a, cb}} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				adminDo(h, "PUT", "/api/admin/identities/"+c.target, `{"admin":false}`, c.cookie)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		admins := 0
+		for _, i := range listIdentities(idents) {
+			if i.Admin {
+				admins++
+			}
+		}
+		if admins == 0 {
+			t.Fatalf("round %d: mutual demotion left zero admins", round)
+		}
+	}
+}
+
+// F4: a single-use invite yields exactly one identity under concurrent finishes
+func TestInviteSingleUseUnderRace(t *testing.T) {
+	t.Setenv("REG_OPEN", "false")
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	rec := adminDo(h, "POST", "/api/admin/invites", `{"uses":1}`, sessionCookieFor(s))
+	var minted struct {
+		Token string `json:"token"`
+	}
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &minted) != nil {
+		t.Fatalf("mint: %d %s", rec.Code, rec.Body)
+	}
+	bodies := make([]string, 8)
+	for i := range bodies {
+		sid, ch := regBegin(t, h, `{"name":"invited","invite":"`+minted.Token+`"}`, "")
+		bodies[i] = newSoftKey(t).finishBody(t, sid, ch)
+	}
+	codes := raceFinishes(h, bodies)
+	ok := 0
+	for _, c := range codes {
+		if c == 200 {
+			ok++
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("single-use invite: %d successful registrations (codes %v), want 1", ok, codes)
+	}
+	if n := s.identCount(); n != 2 {
+		t.Fatalf("identities: %d, want 2", n)
+	}
+	if _, found := loadInvite(dir, minted.Token); found {
+		t.Fatal("exhausted invite file survived")
+	}
+}
+
+// F5: a credential id that already belongs to an identity is refused
+func TestDuplicateCredentialRejected(t *testing.T) {
+	dir := t.TempDir()
+	h := build(dir, "")
+	k := newSoftKey(t)
+	sid, ch := regBegin(t, h, `{"name":"first"}`, "")
+	if rec := regFinish(h, k.finishBody(t, sid, ch), ""); rec.Code != 200 {
+		t.Fatalf("first registration: %d %s", rec.Code, rec.Body)
+	}
+	sid, ch = regBegin(t, h, `{"name":"impostor"}`, "")
+	rec := regFinish(h, k.finishBody(t, sid, ch), "")
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), `"error"`) {
+		t.Fatalf("duplicate credential (fresh): got %d %s, want 400", rec.Code, rec.Body)
+	}
+	idents := listIdentities(filepath.Join(dir, "identities"))
+	if len(idents) != 1 {
+		t.Fatalf("duplicate registration stored an identity: %d", len(idents))
+	}
+	// the owner re-attaching the same key is refused too
+	s := newSessions(dir)
+	cookie := sessionCookieForID(s, idents[0].ID)
+	sid, ch = regBegin(t, h, `{}`, cookie)
+	if rec := regFinish(h, k.finishBody(t, sid, ch), cookie); rec.Code != 400 {
+		t.Fatalf("duplicate credential (attach): got %d %s, want 400", rec.Code, rec.Body)
+	}
+	if got := loadIdentity(filepath.Join(dir, "identities"), idents[0].ID); len(got.Creds) != 1 {
+		t.Fatalf("attach duplicated the credential: %d creds", len(got.Creds))
+	}
+}
+
+// F2: pending ceremonies are capped
+func TestCeremonyCap(t *testing.T) {
+	old := ceremonyCap
+	ceremonyCap = 2
+	t.Cleanup(func() { ceremonyCap = old })
+	h := build(t.TempDir(), "")
+	regBegin(t, h, `{}`, "")
+	if rec := ceremonyPost(h, "/api/identity/login/begin", `{}`, ""); rec.Code != 200 {
+		t.Fatalf("login begin: %d %s", rec.Code, rec.Body)
+	}
+	for _, path := range []string{"/api/identity/register/begin", "/api/identity/login/begin"} {
+		if rec := ceremonyPost(h, path, `{}`, ""); rec.Code != 429 || !strings.Contains(rec.Body.String(), `"error"`) {
+			t.Fatalf("%s over cap: got %d %s, want 429", path, rec.Code, rec.Body)
+		}
+	}
+}
+
+// F2: stale entries are pruned by the next begin, so the cap frees up
+func TestCeremonyPrune(t *testing.T) {
+	old, oldCap := ceremonyNow, ceremonyCap
+	ceremonyCap = 1
+	t.Cleanup(func() { ceremonyNow, ceremonyCap = old, oldCap })
+	h := build(t.TempDir(), "")
+	regBegin(t, h, `{}`, "")
+	ceremonyNow = func() time.Time { return time.Now().Add(3 * time.Minute) }
+	if rec := ceremonyPost(h, "/api/identity/login/begin", `{}`, ""); rec.Code != 200 {
+		t.Fatalf("begin after the stale entry aged out: got %d %s, want 200", rec.Code, rec.Body)
+	}
+}
+
+// F2: a finish past the 2-minute window is rejected and the session is gone
+func TestCeremonyStaleFinish(t *testing.T) {
+	dir := t.TempDir()
+	h := build(dir, "")
+	k := newSoftKey(t)
+	sid, ch := regBegin(t, h, `{"name":"slow"}`, "")
+	old := ceremonyNow
+	ceremonyNow = func() time.Time { return time.Now().Add(3 * time.Minute) }
+	t.Cleanup(func() { ceremonyNow = old })
+	body := k.finishBody(t, sid, ch)
+	if rec := regFinish(h, body, ""); rec.Code != 400 {
+		t.Fatalf("stale finish: got %d %s, want 400", rec.Code, rec.Body)
+	}
+	ceremonyNow = old
+	if rec := regFinish(h, body, ""); rec.Code != 400 || !strings.Contains(rec.Body.String(), "unknown session") {
+		t.Fatalf("replay after stale finish: got %d %s, want 400 unknown session", rec.Code, rec.Body)
+	}
+	if n := len(listIdentities(filepath.Join(dir, "identities"))); n != 0 {
+		t.Fatalf("stale ceremony stored %d identities", n)
+	}
+}
+
+// limitedCode: one rate-limited call (gate verify answers 401 without a key)
+func limitedCode(h http.Handler, remote string, xff ...string) int {
+	req := httptest.NewRequest("POST", "/api/gate", nil)
+	req.RemoteAddr = remote
+	for _, v := range xff {
+		req.Header.Add("X-Forwarded-For", v)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// F3: a public peer cannot rotate X-Forwarded-For to dodge the limiter
+func TestRateLimitXFFSpoof(t *testing.T) {
+	h := build(t.TempDir(), "")
+	for i := 0; i < 30; i++ {
+		if c := limitedCode(h, "203.0.113.7:1234", fmt.Sprintf("198.51.100.%d", i)); c == 429 {
+			t.Fatalf("call %d limited early", i+1)
+		}
+	}
+	if c := limitedCode(h, "203.0.113.7:1234", "198.51.100.200"); c != 429 {
+		t.Fatalf("spoofed XFF from a public peer: got %d, want 429", c)
+	}
+}
+
+// F3: loopback/private peers are the reverse proxy - the last XFF entry is the client
+func TestRateLimitTrustedProxy(t *testing.T) {
+	h := build(t.TempDir(), "")
+	for i := 0; i < 40; i++ {
+		if c := limitedCode(h, "10.0.0.2:5555", fmt.Sprintf("spoofed, 198.51.100.%d", i)); c == 429 {
+			t.Fatalf("distinct clients behind a private proxy shared a bucket at %d", i+1)
+		}
+	}
+	for i := 0; i < 30; i++ {
+		limitedCode(h, "127.0.0.1:5555", "203.0.113.50")
+	}
+	if c := limitedCode(h, "127.0.0.1:5555", "203.0.113.50"); c != 429 {
+		t.Fatalf("one client behind loopback proxy: got %d, want 429", c)
+	}
+	// junk XFF from a private peer falls back to the peer's own bucket
+	for i := 0; i < 30; i++ {
+		limitedCode(h, "10.0.0.3:5555", fmt.Sprintf("junk-%d", i))
+	}
+	if c := limitedCode(h, "10.0.0.3:5555", "junk-final"); c != 429 {
+		t.Fatalf("junk XFF from private peer: got %d, want 429", c)
+	}
+}
+
+// F3: one client controls a whole IPv6 /64
+func TestRateLimitIPv6Slash64(t *testing.T) {
+	h := build(t.TempDir(), "")
+	for i := 0; i < 15; i++ {
+		limitedCode(h, "[2001:db8::1]:1234")
+		limitedCode(h, "[2001:db8::2]:1234")
+	}
+	if c := limitedCode(h, "[2001:db8::3]:1234"); c != 429 {
+		t.Fatalf("same /64: got %d, want 429", c)
+	}
+	if c := limitedCode(h, "[2001:db8:0:1::1]:1234"); c == 429 {
+		t.Fatal("a different /64 shared the bucket")
+	}
+}
+
+// F6: short SESSION_SECRET is refused; a set SESSION_SECRET beats the key file
+func TestSessionSecret(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("SESSION_SECRET", "too-short")
+	if _, err := loadSessionSecret(dir); err == nil {
+		t.Fatal("short SESSION_SECRET accepted")
+	}
+	file := bytes.Repeat([]byte{7}, 32)
+	if err := os.WriteFile(filepath.Join(dir, ".session.key"), file, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := strings.Repeat("e", 40)
+	t.Setenv("SESSION_SECRET", env)
+	if got, err := loadSessionSecret(dir); err != nil || string(got) != env {
+		t.Fatalf("SESSION_SECRET must win over the key file: %q %v", got, err)
+	}
+	t.Setenv("SESSION_SECRET", "")
+	if got, err := loadSessionSecret(dir); err != nil || !bytes.Equal(got, file) {
+		t.Fatalf("unset SESSION_SECRET must use the key file: %v", err)
+	}
+}
+
+// F7: cookie-authenticated POSTs refuse cross-origin and same-site senders
+func TestCrossOriginProtection(t *testing.T) {
+	h := build(t.TempDir(), "")
+	body := fmt.Sprintf(`{"data":%q,"ttl":"1d"}`, fakePayload())
+	send := func(hdr map[string]string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/paste", strings.NewReader(body))
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for _, c := range []struct {
+		hdr  map[string]string
+		want int
+	}{
+		{map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
+		{map[string]string{"Sec-Fetch-Site": "same-site"}, 403},
+		{map[string]string{"Origin": "http://evil.example"}, 403},
+		{map[string]string{"Sec-Fetch-Site": "same-origin"}, 200},
+		{nil, 200}, // curl / scripts send neither header
+	} {
+		rec := send(c.hdr)
+		if rec.Code != c.want {
+			t.Fatalf("%v: got %d %s, want %d", c.hdr, rec.Code, rec.Body, c.want)
+		}
+		if c.want == 403 && (!strings.Contains(rec.Body.String(), "cross-origin request blocked") || rec.Header().Get("Content-Security-Policy") == "") {
+			t.Fatalf("deny must be a secure() JSON error: %v %s", rec.Header(), rec.Body)
+		}
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(send(nil).Body.Bytes(), &created)
+	req := httptest.NewRequest("GET", "/api/paste/"+created.ID, nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("cross-site read: got %d, want 200", rec.Code)
+	}
+}
+
+// S1: writes refuse to eat the last free bytes of the disk
+func TestDiskFloor(t *testing.T) {
+	tinyChunks(t)
+	h := build(t.TempDir(), "")
+	ids, rec := initUpload(t, h, `{"len":21,"ttl":"1h"}`)
+	if rec.Code != 200 {
+		t.Fatalf("init: %d %s", rec.Code, rec.Body)
+	}
+	for n, part := range [][]byte{make([]byte, 8), make([]byte, 8), make([]byte, 5)} {
+		if rec := put(t, h, fmt.Sprintf("/api/uploads/%s/%d", ids.ID, n), part, ""); rec.Code != 204 {
+			t.Fatalf("chunk %d: %d", n, rec.Code)
+		}
+	}
+	old := minFreeBytes
+	minFreeBytes = 1 << 62
+	t.Cleanup(func() { minFreeBytes = old })
+	full := func(what string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != 507 || !strings.Contains(rec.Body.String(), `"error"`) {
+			t.Fatalf("%s on a full disk: got %d %s, want 507", what, rec.Code, rec.Body)
+		}
+	}
+	full("text create", post(t, h, fmt.Sprintf(`{"data":%q,"ttl":"1d"}`, fakePayload())))
+	full("upload init", postTo(t, h, "/api/uploads", `{"len":21,"ttl":"1h"}`, ""))
+	full("chunk put", put(t, h, "/api/uploads/"+ids.ID+"/0", make([]byte, 8), ""))
+	full("finish", postTo(t, h, "/api/uploads/"+ids.ID+"/finish", "", ""))
+	minFreeBytes = old
+	if rec := postTo(t, h, "/api/uploads/"+ids.ID+"/finish", "", ""); rec.Code != 200 {
+		t.Fatalf("finish after space returned: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// S2: oversize chunks are refused and leave neither a part nor a temp file
+func TestUploadChunkOversize(t *testing.T) {
+	tinyChunks(t)
+	dir := t.TempDir()
+	h := build(dir, "")
+	ids, rec := initUpload(t, h, `{"len":21,"ttl":"1h"}`)
+	if rec.Code != 200 {
+		t.Fatalf("init: %d", rec.Code)
+	}
+	for _, size := range []int{9, 4096} {
+		if rec := put(t, h, "/api/uploads/"+ids.ID+"/0", make([]byte, size), ""); rec.Code != 400 {
+			t.Fatalf("chunk of %d bytes: got %d, want 400", size, rec.Code)
+		}
+	}
+	if rec := put(t, h, "/api/uploads/"+ids.ID+"/0", nil, ""); rec.Code != 400 {
+		t.Fatalf("empty chunk: got %d, want 400", rec.Code)
+	}
+	ents, _ := os.ReadDir(filepath.Join(dir, "uploads", ids.ID))
+	if len(ents) != 1 || ents[0].Name() != "upload.json" {
+		names := []string{}
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("rejected chunks left files: %v", names)
+	}
+}
+
+// S3: reverse-share slugs are validated before they touch the filesystem
+func TestRshareSlugTraversal(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	rec := post(t, h, fmt.Sprintf(`{"data":%q,"ttl":"1d"}`, fakePayload()))
+	var created struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	slug := "/api/rshare/..%2F" + created.ID
+	if rec := get(h, slug); rec.Code != 404 {
+		t.Fatalf("traversal meta: got %d %s, want 404", rec.Code, rec.Body)
+	}
+	if rec := postTo(t, h, slug+"/in", `{"id":"`+created.ID+`"}`, ""); rec.Code != 404 {
+		t.Fatalf("traversal register: got %d %s, want 404", rec.Code, rec.Body)
+	}
+	if rec := adminDo(h, "DELETE", slug, "", sessionCookieFor(s)); rec.Code != 404 {
+		t.Fatalf("traversal delete: got %d %s, want 404", rec.Code, rec.Body)
+	}
+}
+
+// S4: a view-count rewrite never resurrects a concurrently deleted paste
+func TestRewriteIfExistsNoResurrect(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "gone1234.json")
+	if err := rewriteIfExists(p, []byte(`{"expires":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatalf("rewrite recreated a deleted paste: %v", err)
+	}
+}
+
+// S5: polling a burn bundle's meta never extends its life
+func TestBurnGraceOnlyShortens(t *testing.T) {
+	tinyChunks(t)
+	burnWindowSec = 30
+	dir := t.TempDir()
+	h := build(dir, "")
+	ids, _ := initUpload(t, h, `{"len":21,"ttl":"1d","burn":true}`)
+	put(t, h, "/api/uploads/"+ids.ID+"/0", make([]byte, 8), "")
+	put(t, h, "/api/uploads/"+ids.ID+"/1", make([]byte, 8), "")
+	put(t, h, "/api/uploads/"+ids.ID+"/2", make([]byte, 5), "")
+	if rec := postTo(t, h, "/api/uploads/"+ids.ID+"/finish", "", ""); rec.Code != 200 {
+		t.Fatalf("finish: %d", rec.Code)
+	}
+	if rec := get(h, "/api/paste/"+ids.ID); rec.Code != 200 {
+		t.Fatalf("first meta read: %d", rec.Code)
+	}
+	limit := time.Now().Unix() + 5
+	if err := os.WriteFile(filepath.Join(dir, ids.ID+".json"), []byte(fmt.Sprintf(`{"len":21,"burn":true,"expires":%d}`, limit)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := get(h, "/api/paste/"+ids.ID)
+	var meta struct {
+		Expires int64 `json:"expires"`
+	}
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &meta) != nil {
+		t.Fatalf("second meta read: %d %s", rec.Code, rec.Body)
+	}
+	if meta.Expires > limit {
+		t.Fatalf("meta read extended the burn window: %d > %d", meta.Expires, limit)
+	}
+}
+
+// S6: anonymous rshare DELETE answers like the other owner routes, no panic
+func TestRshareDeleteAnon(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	if rec := postAs(t, h, "/api/rshare", `{"slug":"anon-target","ttl":"1d","maxSize":1024}`, sessionCookieFor(s)); rec.Code != 200 {
+		t.Fatalf("create inbox: %d %s", rec.Code, rec.Body)
+	}
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	req, _ := http.NewRequest("DELETE", srv.URL+"/api/rshare/anon-target", nil)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("anon delete dropped the connection: %v", err)
+	}
+	defer res.Body.Close()
+	var e struct {
+		Error string `json:"error"`
+	}
+	if res.StatusCode != 401 || json.NewDecoder(res.Body).Decode(&e) != nil || e.Error == "" {
+		t.Fatalf("anon delete: got %d, want 401 JSON", res.StatusCode)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "inboxes", "anon-target.json")); err != nil {
+		t.Fatal("anon delete removed the inbox")
+	}
+}
+
+// S7: inbox creation claims the file exclusively - a racing rival is never overwritten
+func TestRshareCreateExclusive(t *testing.T) {
+	dir := t.TempDir()
+	s := testSession(t, dir)
+	h := build(dir, "")
+	if err := os.MkdirAll(filepath.Join(dir, "inboxes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// a rival claimed the name but has not written its body yet
+	if err := os.WriteFile(filepath.Join(dir, "inboxes", "claimed.json"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := postAs(t, h, "/api/rshare", `{"slug":"claimed","ttl":"1d","maxSize":1024}`, sessionCookieFor(s))
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "taken") {
+		t.Fatalf("racing claim: got %d %s, want 409", rec.Code, rec.Body)
+	}
+}
+
+// public pastes: only the owning identity may DELETE; encrypted pastes stay open
+func TestPublicPasteDeleteOwnerOnly(t *testing.T) {
+	tinyChunks(t)
+	dir := t.TempDir()
+	s, ownerID := testAdmin(t, dir)
+	other := identity{ID: newSessionID(), Name: "other-member"}
+	if err := s.saveIdentity(&other); err != nil {
+		t.Fatal(err)
+	}
+	h := build(dir, "")
+	owner, member := sessionCookieForID(s, ownerID), sessionCookieForID(s, other.ID)
+	rec := postAs(t, h, "/api/paste", `{"data":"public words","ttl":"1h","public":true,"slug":"guessable"}`, owner)
+	if rec.Code != 200 {
+		t.Fatalf("public create: %d %s", rec.Code, rec.Body)
+	}
+	if rec := adminDo(h, "DELETE", "/api/paste/guessable", "", ""); rec.Code != 403 {
+		t.Fatalf("anon delete of public paste: got %d, want 403", rec.Code)
+	}
+	if rec := get(h, "/api/paste/guessable"); rec.Code != 200 {
+		t.Fatalf("public paste gone after refused delete: %d", rec.Code)
+	}
+	if rec := adminDo(h, "DELETE", "/api/paste/guessable", "", member); rec.Code != 403 {
+		t.Fatalf("non-owner delete of public paste: got %d, want 403", rec.Code)
+	}
+	if rec := adminDo(h, "DELETE", "/api/paste/guessable", "", owner); rec.Code != 200 {
+		t.Fatalf("owner delete: got %d %s", rec.Code, rec.Body)
+	}
+	if rec := get(h, "/api/paste/guessable"); rec.Code != 404 {
+		t.Fatalf("owner delete left the paste: %d", rec.Code)
+	}
+	// public bundle: same rule, the blob survives a refused delete
+	rec = postAs(t, h, "/api/uploads", `{"len":5,"ttl":"1h","public":true}`, owner)
+	var up struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &up)
+	put(t, h, "/api/uploads/"+up.ID+"/0", []byte("hello"), "")
+	if rec := postAs(t, h, "/api/uploads/"+up.ID+"/finish", "", owner); rec.Code != 200 {
+		t.Fatalf("public bundle finish: %d %s", rec.Code, rec.Body)
+	}
+	if rec := adminDo(h, "DELETE", "/api/paste/"+up.ID, "", ""); rec.Code != 403 {
+		t.Fatalf("anon delete of public bundle: got %d, want 403", rec.Code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, up.ID+".blob")); err != nil {
+		t.Fatalf("public blob removed by refused delete: %v", err)
+	}
+	// public burn bundle: reading already destroys it, so the reader's DELETE
+	// (fired after the manifest opens) must land - else it outlives the burn
+	rec = postAs(t, h, "/api/uploads", `{"len":5,"ttl":"1h","public":true,"burn":true}`, owner)
+	json.Unmarshal(rec.Body.Bytes(), &up)
+	put(t, h, "/api/uploads/"+up.ID+"/0", []byte("hello"), "")
+	if rec := postAs(t, h, "/api/uploads/"+up.ID+"/finish", "", owner); rec.Code != 200 {
+		t.Fatalf("public burn bundle finish: %d %s", rec.Code, rec.Body)
+	}
+	if rec := get(h, "/api/paste/"+up.ID); rec.Code != 200 {
+		t.Fatalf("public burn bundle read: %d", rec.Code)
+	}
+	if rec := adminDo(h, "DELETE", "/api/paste/"+up.ID, "", ""); rec.Code != 200 {
+		t.Fatalf("reader delete of public burn bundle: got %d, want 200", rec.Code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, up.ID+".blob")); !os.IsNotExist(err) {
+		t.Fatalf("public burn blob survived the reader's delete: %v", err)
+	}
+	// encrypted pastes keep the open DELETE (passphrase burn needs it)
+	rec = post(t, h, fmt.Sprintf(`{"data":%q,"ttl":"1d"}`, fakePayload()))
+	var enc struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &enc)
+	if rec := adminDo(h, "DELETE", "/api/paste/"+enc.ID, "", ""); rec.Code != 200 {
+		t.Fatalf("anon delete of encrypted paste: got %d, want 200", rec.Code)
+	}
+}
+
+// orphan blobs (no meta) are reaped once aged; fresh ones may be mid-finish
+func TestSweepOrphanBlobs(t *testing.T) {
+	dir := t.TempDir()
+	old := time.Now().Add(-2 * time.Hour)
+	write := func(name, body string, mtime time.Time) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	orphan := write("AAAAAAAAAAA.blob", "x", old)
+	fresh := write("BBBBBBBBBBB.blob", "x", time.Now())
+	paired := write("CCCCCCCCCCC.blob", "x", old)
+	write("CCCCCCCCCCC.json", fmt.Sprintf(`{"len":1,"expires":%d}`, time.Now().Add(time.Hour).Unix()), old)
+	sweep(dir)
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatal("aged orphan blob survived the sweep")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatal("fresh orphan blob swept (could be an in-flight finish)")
+	}
+	if _, err := os.Stat(paired); err != nil {
+		t.Fatal("blob with a live meta swept")
+	}
+}
+
+// racing finishes of one session: the loser's cleanup must not eat the winner's blob
+func TestUploadFinishConcurrent(t *testing.T) {
+	tinyChunks(t)
+	dir := t.TempDir()
+	h := build(dir, "")
+	for round := 0; round < 5; round++ { // 5 inits + 20 finishes stay under the 30/min limiter
+		ids, _ := initUpload(t, h, `{"len":21,"ttl":"1h"}`)
+		put(t, h, "/api/uploads/"+ids.ID+"/0", make([]byte, 8), "")
+		put(t, h, "/api/uploads/"+ids.ID+"/1", make([]byte, 8), "")
+		put(t, h, "/api/uploads/"+ids.ID+"/2", make([]byte, 5), "")
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/uploads/"+ids.ID+"/finish", nil))
+			}()
+		}
+		close(start)
+		wg.Wait()
+		_, metaErr := os.Stat(filepath.Join(dir, ids.ID+".json"))
+		st, err := os.Stat(filepath.Join(dir, ids.ID+".blob"))
+		if metaErr == nil && (err != nil || st.Size() != 21) {
+			t.Fatalf("round %d: meta without an intact blob after concurrent finishes: %v", round, err)
+		}
 	}
 }

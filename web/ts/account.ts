@@ -1,6 +1,6 @@
 import { $ } from "./dom";
 import { showWelcome, tourSeen } from "./tour";
-import { b64uFromBytes, bytesFromB64u, deriveKey, seal } from "./crypto";
+import { b64uFromBytes, bytesFromB64u, deriveKey, seal, KEY_B64U } from "./crypto";
 import { humanSize, copy } from "./ui";
 
 // Passkey account flows + the active-shares dashboard, both passkey-only.
@@ -45,8 +45,11 @@ function fragPut(id: string, keyB64: string): void {
   }
 }
 
+// fill-only: create ids are fresh, and the reverse view's heal path must never
+// replace a key this browser already holds (a crafted /r/<slug>#<other key>
+// link would orphan every arrival and swap the uplink the dashboard hands out)
 export function stashForCreate(id: string, keyB64: string): void {
-  if (keyB64) fragPut(id, keyB64);
+  if (keyB64 && !fragGet(id)) fragPut(id, keyB64);
 }
 
 function dropFrags(): void {
@@ -1073,10 +1076,16 @@ async function renderRshares(): Promise<void> {
     linkInput.addEventListener("focus", () => linkInput.select());
     field.append(linkInput);
     detail.append(linkLabel, field);
-    if (!valid) {
+    // fragment-key repair: a lost key (this browser never held it) or a
+    // replaced one (slug recreated elsewhere - arrivals won't open). The
+    // reverse view only fills a MISSING key, so replacing one stays this
+    // deliberate, owner-only step.
+    if (!r.pass) {
       const warn = document.createElement("span");
-      warn.className = "revwarn";
-      warn.textContent = "this browser lost the key - paste the original drop link (or its #key) to read arrivals here";
+      warn.className = valid ? "revnote" : "revwarn";
+      warn.textContent = valid
+        ? "arrivals won't open? paste the current drop link to replace this browser's key"
+        : "this browser lost the key - paste the original drop link (or its #key) to read arrivals here";
       const fix = document.createElement("div");
       fix.className = "revfix";
       const inp = document.createElement("input");
@@ -1086,13 +1095,14 @@ async function renderRshares(): Promise<void> {
       inp.spellcheck = false;
       const repair = document.createElement("button");
       repair.type = "button";
-      repair.textContent = "Repair";
+      repair.textContent = valid ? "Replace" : "Repair";
       repair.addEventListener("click", () => {
         // recovery: the key never left the sender-side links, so it has to
         // come back from wherever one still lives (chat, another device)
         const raw = inp.value.trim();
         const key = raw.includes("http") ? raw.slice(raw.lastIndexOf("#") + 1).trim() : raw;
-        if (!/^[A-Za-z0-9_-]{10,}$/.test(key)) {
+        if (!KEY_B64U.test(key)) {
+          warn.className = "revwarn";
           warn.textContent = "that is not an intact drop link or key - keep the part after #";
           return;
         }

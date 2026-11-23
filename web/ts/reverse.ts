@@ -1,7 +1,7 @@
 import { $ } from "./dom";
 import { uploadBundle, abortUpload, UploadAborted } from "./uploads";
 import { humanSize } from "./ui";
-import { deriveKey, open_, bytesFromB64u, importKeyB64u, AesKey } from "./crypto";
+import { deriveKey, open_, bytesFromB64u, importKeyB64u, AesKey, KEY_B64U } from "./crypto";
 import { stashForCreate } from "./account";
 
 // /r/<slug>#<keyB64>: the sender-facing reverse upload page. The slug picks
@@ -133,14 +133,16 @@ export async function reverseView(): Promise<void> {
     return;
   }
   if (keyB64) {
-    // fragment mode: validate the key shape, then strip it from the bar
-    if (!/^[A-Za-z0-9_-]{10,}$/.test(keyB64)) {
+    // fragment mode: uplink keys are always 32 bytes - any other shape is a
+    // truncated or altered link; then strip the key from the bar
+    if (!KEY_B64U.test(keyB64)) {
       rfail("This drop link lost its decryption key - only the intact link (with the part after #) can upload.");
       return;
     }
-    // remember the key on EVERY browser that opens the intact link: the
-    // owner re-opens their own drop link here and the dashboard row heals
-    // (the stash is the client-side key store, never sent to the server)
+    // heal: the owner re-opens their own drop link and a dashboard row that
+    // lost its key gets it back. Fill-only (stashForCreate), so a crafted
+    // /r/<slug>#<other key> link cannot replace a key this browser holds.
+    // The stash is the client-side key store, never sent to the server.
     stashForCreate("rv:" + rslug, keyB64);
     history.replaceState(null, "", location.pathname);
     await startBody(await importKeyB64u(keyB64), meta.expires, cap);

@@ -19,9 +19,9 @@
 <link rel="icon" href="/assets/icon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <title>zeropaste</title>
-<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.12.6" media="(prefers-color-scheme: light)">
-<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.12.6" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/assets/style.css?v=0.12.6">
+<link id="hljs-light" rel="stylesheet" href="/assets/atom-one-light.min.css?v=0.12.7" media="(prefers-color-scheme: light)">
+<link id="hljs-dark" rel="stylesheet" href="/assets/atom-one-dark.min.css?v=0.12.7" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/style.css?v=0.12.7">
 </head>
 <body>
 <main>
@@ -465,6 +465,9 @@
     volumes:
       - paste-data:/data
     restart: unless-stopped
+    read_only: true                    # hardening: the app writes only to /data
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       CREATE_KEY: "change-me"          # site passphrase in front of creates; delete the line for a fully public instance
       USER_ACCOUNTS: "true"            # "false" = no accounts at all
@@ -483,6 +486,6 @@ volumes:
 
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets/qrcode.min.js"></script>
-<script src="/assets/app.js?v=0.12.6"></script>
+<script src="/assets/app.js?v=0.12.7"></script>
 </body>
 </html>

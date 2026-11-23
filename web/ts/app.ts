@@ -397,11 +397,20 @@ document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((btn) => {
 });
 
 if (location.search.includes("selfcheck")) {
+  // diagnostic page: uploads a throwaway 1 h bundle under this tab's session
+  // and counts against the share limit, so it waits for a click - a
+  // cross-site link to /?selfcheck must not create shares for the visitor
   document.body.textContent = "";
+  const run = document.createElement("button");
+  run.type = "button";
+  run.textContent = "Run self-check (uploads a 1 hour test bundle)";
   const preEl = document.createElement("pre");
   preEl.id = "selfout";
-  document.body.appendChild(preEl);
-  void selfcheck();
+  run.addEventListener("click", () => {
+    run.remove();
+    void selfcheck();
+  });
+  document.body.append(run, preEl);
 } else if (location.pathname === "/dash") {
   initTheme();
   void dashboardPage();

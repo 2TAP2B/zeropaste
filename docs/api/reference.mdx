@@ -1,6 +1,12 @@
 # API reference
 
-All routes answer JSON errors as `{"error": "<generic message>"}` - never internal details. Base paths carry security headers; rate limit: 30 creates/min/IP.
+All routes answer JSON errors as `{"error": "<generic message>"}` - never internal details. Base paths carry security headers; rate limit: 30 creates/min per client.
+
+Cross-cutting answers:
+
+- **403 `cross-origin request blocked`** - any non-GET request a browser marks as coming from another origin, including a sibling subdomain (`Sec-Fetch-Site: cross-site`/`same-site`, or a mismatching `Origin` when that header is absent). The app's own pages are same-origin; `curl` and scripts (no browser headers) pass.
+- **429** - rate limit hit. The client is the connecting address; only a peer on loopback or a private network (your reverse proxy) may name the real client via the **last** `X-Forwarded-For` entry. IPv6 clients are bucketed per `/64`.
+- **507 `storage is full`** - creating a paste or upload would leave less than 512 MiB free on the data volume. Reads and deletes keep working.
 
 ## pastes
 
@@ -8,7 +14,7 @@ All routes answer JSON errors as `{"error": "<generic message>"}` - never intern
 | --- | --- | --- | --- |
 | `POST` | `/api/paste` | gate/members per mode | body: `{data, salt, ttl, hl, burn, public?, slug?}`; 256 KiB cap; success → `{"id"}` |
 | `GET` | `/api/paste/{id}` | public | → `{data, salt, hl, burn, expires, public}`; `no-store`; burn+random-key deletes on read |
-| `DELETE` | `/api/paste/{id}` | public | idempotent; removes text pastes and bundles |
+| `DELETE` | `/api/paste/{id}` | public / owner | idempotent; removes text pastes and bundles. **Public** pastes (unless burn-after-reading) → 403 for anyone but the signed-in owner |
 
 `id`: 8-16 chars, `[A-Za-z0-9_-]` - the sole path gate; anything else is a 404 before any file is touched.
 
@@ -21,9 +27,9 @@ All routes answer JSON errors as `{"error": "<generic message>"}` - never intern
 | method | path | auth | notes |
 | --- | --- | --- | --- |
 | `POST` | `/api/uploads` | gate/members | `{len, ttl, salt?, burn?, public?, slug?}` → `{id, chunkSize, chunks}`; 1 KiB cap |
-| `PUT` | `/api/uploads/{id}/{n}` | gate | raw ciphertext chunk, exact size enforced (full = chunk, last = remainder); overwrite = resume; **not** rate limited |
+| `PUT` | `/api/uploads/{id}/{n}` | gate | raw ciphertext chunk, exact size enforced (full = chunk, last = remainder); streamed to disk; overwrite = resume; **not** rate limited |
 | `DELETE` | `/api/uploads/{id}` | public | idempotent abort, wipes the session |
-| `POST` | `/api/uploads/{id}/finish` | gate/members | verifies all parts, joins the blob; incomplete → 400 with parts kept |
+| `POST` | `/api/uploads/{id}/finish` | gate/members | verifies all parts, joins the blob; incomplete → 400 with parts kept; concurrent finishes of one session serialize (the second answers idempotently) |
 | `GET` | `/api/paste/{id}/blob?offset=N` | public | up to `CHUNK` bytes of ciphertext ranges; `no-store` |
 
 Slugged public sessions finish under the custom name; a repeat finish answers idempotently from a tombstone.
@@ -41,21 +47,23 @@ Slugged public sessions finish under the custom name; a repeat finish answers id
 
 | method | path | auth | notes |
 | --- | --- | --- | --- |
-| `POST` | `/api/rshare` | session | `{slug, ttl, maxSize, salt?, check?}` - slug globally unique (409), counts against the share cap |
+| `POST` | `/api/rshare` | session | `{slug, ttl, maxSize, salt?, check?}` - slug globally unique, claimed exclusively (409), counts against the share cap |
 | `GET` | `/api/rshares` | session | the owner's live inboxes + arrivals |
-| `DELETE` | `/api/rshare/{slug}` | session | removes the inbox **and every registered paste** |
+| `DELETE` | `/api/rshare/{slug}` | session | removes the inbox **and every registered paste**; anonymous → 401, another member's inbox → 404 |
 | `GET` | `/api/rshare/{slug}` | public | `{maxSize, expires}` only - no inventory leak |
 | `POST` | `/api/rshare/{slug}/in` | public | `{id}` registers an existing paste; 403 over the cap; idempotent |
+
+Every `{slug}` must be a valid slug (`3-32`, `a-z0-9_-`), else 404.
 
 ## identity
 
 | method | path | auth | notes |
 | --- | --- | --- | --- |
 | `GET` | `/api/me` | public | `{name, id?, accounts, open, admin?, passkeys[]}` - empty name when anonymous |
-| `POST` | `/api/identity/register/begin` | rate limited | `{name, invite?}` → ceremony options |
-| `POST` | `/api/identity/register/finish` | rate limited | attestation; the FIRST registrant becomes admin |
-| `POST` | `/api/identity/login/begin` / `finish` | rate limited | discoverable passkey sign-in |
-| `POST` | `/api/identity/logout` | public | clears the cookie |
+| `POST` | `/api/identity/register/begin` | rate limited | `{name, invite?}` → ceremony options (`timeout` 120000 ms - pending ceremonies expire after 2 minutes); 429 while 10000 ceremonies are pending |
+| `POST` | `/api/identity/register/finish` | rate limited | attestation; the FIRST registrant becomes admin; a credential already registered to any identity → 400; adding a passkey keeps the account's name and admin flag |
+| `POST` | `/api/identity/login/begin` / `finish` | rate limited | discoverable passkey sign-in; same 2-minute expiry and 429 cap |
+| `POST` | `/api/identity/logout` | public | clears the cookie (sessions are stateless - see [security](/guide/security)) |
 
 ## admin (admin session only)
 

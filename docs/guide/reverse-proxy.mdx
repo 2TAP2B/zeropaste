@@ -6,7 +6,15 @@ zeropaste serves plain HTTP by design - TLS termination, HSTS and certificates b
 
 - terminate TLS and set **HSTS** (the app deliberately does not);
 - keep the `Host` header intact - the app derives request-scoped RP IDs and share URLs from it;
-- no special headers required. The rate limiter reads the **last** `X-Forwarded-For` entry (your proxy appends the real client IP; spoofed earlier entries only pollute the visitor's own chain). Cookies flip to `Secure` automatically on HTTPS requests, direct or proxied.
+- no special headers required. Cookies flip to `Secure` automatically on HTTPS requests, direct or proxied.
+
+## client addresses and `X-Forwarded-For`
+
+The rate limiter needs the real client address. It trusts `X-Forwarded-For` **only when the connection comes from loopback or a private network** (`127.0.0.0/8`, `::1`, `10/8`, `172.16/12`, `192.168/16`, `fc00::/7`) - that is your proxy, on the same host or the same Docker network. It then reads the **last** entry, the one your proxy appended; spoofed earlier entries only pollute the visitor's own chain.
+
+A connection from a public address *is* the client: its `X-Forwarded-For` is ignored, so nobody on the internet can pick their own rate-limit bucket. Consequence: if your proxy reaches zeropaste over a **public** IP, every visitor shares the proxy's single bucket - keep the hop on loopback or a private network.
+
+Caddy and the nginx recipe below append the header correctly. IPv6 clients are bucketed per `/64`.
 
 ## caddy
 

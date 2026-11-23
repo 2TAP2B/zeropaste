@@ -1,0 +1,90 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 5 * * *" # daily: a newly published Go advisory fails the audit without any push
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GOVULNCHECK: golang.org/x/vuln/cmd/govulncheck@v1.10.0
+
+jobs:
+  # the AGENTS.md §8 gate in the nix dev shell (go_1_26, esbuild, tsc), then
+  # govulncheck against that toolchain, the nix package and the NixOS module
+  # booted in a VM (flake check)
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # the runner has KVM but keeps /dev/kvm root-only; the VM test needs it
+      - name: enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: cachix/install-nix-action@bb0495a1086c46893eee56f32fd192dfe4a15bb9 # v32.0.0
+        with:
+          extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
+      - name: gofmt, vet, test, bundle, tsc, build
+        run: nix develop --command sh -c 'test -z "$(gofmt -l .)" && go vet ./... && go test ./... && esbuild --bundle web/ts/app.ts --outfile=web/assets/app.js --minify --target=es2020 && tsc --noEmit && go build -trimpath -ldflags="-s -w" -o paste .'
+      - name: committed bundle is fresh
+        run: git diff --exit-code -- web/assets/app.js || { echo "::error::web/assets/app.js is stale - regenerate it in the dev shell and commit"; exit 1; }
+      - name: release guard pins the dev shell's esbuild
+        run: |
+          shell=$(nix develop --command esbuild --version | tail -n1)
+          pinned=$(sed -n 's/.*esbuild@\([0-9.]*\).*/\1/p' .github/workflows/docker.yml)
+          [ "$shell" = "$pinned" ] || { echo "::error::docker.yml pins esbuild@$pinned, the dev shell has $shell - align them"; exit 1; }
+      - name: govulncheck (nix toolchain)
+        run: nix develop --command sh -c 'CGO_ENABLED=0 go run "$GOVULNCHECK" ./...'
+      - name: nix package + NixOS module VM test
+        run: nix build .#checks.x86_64-linux.module -L
+
+  # govulncheck against the toolchain the docker image ships (Dockerfile pin)
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: go
+        run: |
+          v=$(sed -n 's/^FROM golang:\([0-9][0-9.]*\)-alpine.*/\1/p' Dockerfile)
+          test -n "$v" && echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+      - run: CGO_ENABLED=0 go run "$GOVULNCHECK" ./...
+
+  # the shipped container: builds from the pinned bases and serves with the
+  # compose hardening (read-only rootfs, no capabilities, no-new-privileges)
+  image:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build -t zeropaste:ci .
+      - name: smoke
+        run: |
+          docker run -d --name zp -p 8080:8080 --read-only --cap-drop ALL --security-opt no-new-privileges zeropaste:ci
+          for _ in $(seq 30); do curl -fsS http://127.0.0.1:8080/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/ | grep -q '<title>zeropaste</title>'
+          curl -fsS -H 'Content-Type: application/json' -d '{"data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","ttl":"5m"}' http://127.0.0.1:8080/api/paste | grep -q '"id"'
+      - if: failure()
+        run: docker logs zp

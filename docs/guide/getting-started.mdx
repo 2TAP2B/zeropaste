@@ -31,6 +31,10 @@ services:
     volumes:
       - paste-data:/data
     restart: unless-stopped
+    # hardening, no behaviour change: the app writes only to /data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     # environment:
     #   - CREATE_KEY=change-me          # passphrase gate in front of pasting
     #   - LOCKED=true                   # members only - passkey sign-in to paste
@@ -75,6 +79,8 @@ go build -trimpath -ldflags="-s -w" -o zeropaste .
 ./zeropaste -addr 127.0.0.1:8080 -data ./data
 ```
 
+Builds on Linux, macOS and FreeBSD (the disk-space guard uses `statfs`); the published image and the Nix package are Linux.
+
 Flags: `-addr` (listen address, default `127.0.0.1:8080`) and `-data` (state directory, default `data`). Everything else is environment or the [admin config](/guide/configuration). Run it as a service with systemd or your platform's equivalent.
 
 ### NixOS
@@ -90,10 +96,12 @@ imports = [ inputs.zeropaste.nixosModules.zeropaste ];
 services.zeropaste = {
   enable = true;
   listenAddress = "127.0.0.1:8080"; # loopback default; your reverse proxy does TLS
+  # createKeyFile = "/run/secrets/zeropaste.env"; # CREATE_KEY=... - a string path,
+  #   never a ./literal: a path literal would be copied into the world-readable store
 };
 ```
 
-The module runs with a `DynamicUser`, keeps state in `/var/lib/zeropaste` and sandbox-hardenes the unit. Standalone: `nix run github:2tap2b/zeropaste`.
+The module runs with a `DynamicUser`, keeps state in `/var/lib/zeropaste` and sandbox-hardens the unit (no capabilities, read-only system, private `/proc`, no W+X memory, `@system-service` syscall filter). Standalone: `nix run github:2tap2b/zeropaste`.
 
 ## Register the owner account
 

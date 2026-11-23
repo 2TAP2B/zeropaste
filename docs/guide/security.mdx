@@ -15,15 +15,20 @@ The product is a threat model made code. This page states what zeropaste protect
 | --- | --- |
 | transport | app serves HTTP; TLS + HSTS are the proxy's job |
 | validation | every boundary: ttl shape, length caps, strict base64url, `validID` charset (the sole path-traversal gate), `MaxBytesReader` everywhere |
-| CSRF | blocked by construction - state-changing endpoints require JSON/bearer bodies; no CORS headers are ever emitted |
-| cookies | HttpOnly, SameSite=Lax, `Secure` on HTTPS; bounded MaxAge; HMAC-signed, secret in `data/.session.key` |
+| CSRF | JSON/bearer bodies on every state-changing endpoint, no CORS headers ever, and Go's cross-origin protection: browsers' non-GET requests from another origin - including a sibling subdomain - are refused (`Sec-Fetch-Site` / `Origin`) |
+| cookies | HttpOnly, SameSite=Lax, `Secure` on HTTPS; bounded MaxAge; HMAC-SHA256-signed with a 32-byte secret (`data/.session.key`, or `SESSION_SECRET` - at least 32 bytes, else the server refuses to start) |
+| rate limits | per client: the connecting address, or - only when the peer is on loopback/a private network (your proxy) - the last `X-Forwarded-For` entry; IPv6 per `/64`. A public peer cannot pick its own bucket |
+| abuse floors | creates and uploads stop with `507` before the data volume drops under 512 MiB free; upload chunks stream to disk; pending passkey ceremonies expire after 2 minutes and are capped |
 | headers | `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, strict CSP with `blob:` only for decrypted previews |
 
 ## supply chain
 
 - one direct Go module (go-webauthn); everything else is stdlib.
-- `govulncheck ./...` runs in the release gate; findings are triaged against reachability and recorded.
-- shipped toolchains track the patched Go release (the eMudhra intermediate distrust, CVE-2026-111943, landed in the 1.26.10/1.27.3 lines).
+- **Dependabot** watches every ecosystem in the repo: Go modules (weekly, grouped), the Docker base images (daily - a `golang` patch release is usually a security release), GitHub Actions, the docs site's npm packages and the Nix flake. Version bumps wait out a short cooldown; security updates open immediately.
+- **CI** (`ci.yml`) runs on every push and pull request - the full test/typecheck gate, the bundle-freshness check, the Nix package, the NixOS module booted in a VM, and the container smoke-tested with the compose hardening - and **daily `govulncheck`** against *both* shipped Go toolchains (the Docker builder and the Nix package), so a newly published Go advisory fails CI even when nothing in the repo moved.
+- base images are pinned by tag **and digest**; every action is pinned to a full commit SHA; workflows run with least-privilege tokens.
+- release images carry an SBOM and SLSA provenance attestation.
+- shipped toolchains track the patched Go release (currently Go 1.26.11: CVE-2026-97054 / GO-2026-6859 and the earlier eMudhra intermediate distrust, CVE-2026-111943).
 
 ## the deliberate ceilings
 
@@ -33,6 +38,10 @@ Marked `// ponytail:` in the code - weaker-but-fine behavior for a friend-group 
 - pending webauthn ceremonies live in memory (2 min) - a restart drops them; multi-instance deployments share nothing.
 - a heavily renamed legacy identity can win the oldest-file admin migration; the boot log names the pick.
 - bundle encryption is in-memory: ~2 GiB is the practical bundle ceiling.
+- sessions are stateless signed cookies: **logout clears the cookie in that browser only**; a copied cookie stays valid until it expires (30 days). Rotating `SESSION_SECRET` (or deleting `data/.session.key`) signs everyone out.
+- whoever holds the link to an **encrypted** paste can delete it (the passphrase burn needs that client-side DELETE); public pastes are owner-only.
+- peers on loopback/private networks are trusted to name the client via `X-Forwarded-For`; on a LAN without a proxy, a LAN client can therefore pick its own rate-limit bucket.
+- the free-space floor is a fixed 512 MiB, measured with `statfs` - the server builds on Linux, macOS and FreeBSD (the shipped images and packages are Linux).
 
 ## what the app embeds
 
@@ -40,4 +49,4 @@ Everything the frontend needs ships inside the binary: the UI, syntax highlighti
 
 ## reporting
 
-Open a GitHub issue for anything reachable - or a private security advisory for the zero-knowledge contract itself.
+Report vulnerabilities privately: [Security → Report a vulnerability](https://github.com/2TAP2B/zeropaste/security/advisories/new) on GitHub (see `SECURITY.md`). Please don't open public issues for anything exploitable.

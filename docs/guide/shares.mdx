@@ -46,6 +46,8 @@ Instead of a random key you can protect a paste with a shared passphrase:
 
 Signed-in users can flip the `public paste` slider to send a paste **unencrypted** - for a want-to-be-googleable note or a pastebin-style mirror. The server stores and serves exactly what was sent, the link has no key at all, and creation is always account-only. Instances can switch the feature off (`PUBLIC_PASTES=false` or the admin config).
 
+Only you can delete a public paste (from your dashboard) - unlike encrypted pastes, whose link doubles as the delete capability, public links often carry guessable custom slugs. Public burn-after-reading pastes still die on the first read.
+
 ## links and QR
 
 Share URLs are built from whatever address the browser is on (`location.origin`) - the server never learns its own public domain. Every created paste offers a copyable link and a client-rendered QR code.

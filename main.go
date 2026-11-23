@@ -12,6 +12,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"html"
@@ -21,6 +22,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -44,6 +46,10 @@ var (
 	maxBlobBytes  int64 = 2 << 30 // 2 GiB per share (whole-file in-memory encryption bound)
 	chunkBytes    int64 = 8 << 20 // 8 MiB per chunk PUT / range GET
 	burnWindowSec int64 = 30      // bundle burn: grace window after meta read (protocol needs it to finish downloading)
+	// ponytail: a free-space floor, not a quota - anonymous creates stop
+	// (507) before the disk is full so identity/inbox/meta writes and the OS
+	// keep room; one uploader can still use everything above the floor.
+	minFreeBytes int64 = 512 << 20
 )
 
 //go:embed web/index.html
@@ -199,17 +205,32 @@ func (s *sessions) rshareCreate(dir string) http.HandlerFunc {
 			httpError(w, 500, "could not open inbox area")
 			return
 		}
-		if loadInbox(dir, q.Slug) != nil { // slugs are globally unique across owners
-			httpError(w, 409, "that slug is already taken")
-			return
-		}
 		if cfgMaxShares() > 0 && s.inboxesOwned(dir, i.ID) >= int(cfgMaxShares()) {
 			httpError(w, 403, "share limit reached for this account")
 			return
 		}
 		bi := inbox{Slug: q.Slug, Owner: i.ID, MaxSize: q.MaxSize, Expires: time.Now().Add(ttl).Unix(), Created: time.Now().Unix(), Salt: q.Salt, Check: q.Check, Uploads: []inboxItem{}}
-		if err := saveInbox(dir, &bi); err != nil {
+		b, _ := json.Marshal(&bi)
+		// slugs are globally unique across owners: O_EXCL turns a racing
+		// creator into 409 instead of one silently overwriting the other
+		p := filepath.Join(att, q.Slug+".json")
+		f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if os.IsExist(err) {
+			httpError(w, 409, "that slug is already taken")
+			return
+		}
+		if err != nil {
 			log.Print(err)
+			httpError(w, 500, "could not store reverse share")
+			return
+		}
+		_, werr := f.Write(b)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			os.Remove(p)
+			log.Print(werr)
 			httpError(w, 500, "could not store reverse share")
 			return
 		}
@@ -277,6 +298,10 @@ func rshareList(dir string, s *sessions) http.HandlerFunc {
 func rshareMeta(dir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
+		if !validSlug(slug) { // sole traversal gate before loadInbox joins the path
+			httpError(w, 404, "no such reverse share")
+			return
+		}
 		bi := loadInbox(dir, slug)
 		if bi == nil || bi.Expires < time.Now().Unix() {
 			httpError(w, 404, "no such reverse share")
@@ -293,6 +318,10 @@ func rshareMeta(dir string) http.HandlerFunc {
 func (s *sessions) rshareIn(dir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
+		if !validSlug(slug) { // sole traversal gate before loadInbox joins the path
+			httpError(w, 404, "no such reverse share")
+			return
+		}
 		bi := loadInbox(dir, slug)
 		if bi == nil || bi.Expires < time.Now().Unix() {
 			httpError(w, 404, "no such reverse share")
@@ -308,6 +337,15 @@ func (s *sessions) rshareIn(dir string) http.HandlerFunc {
 		}
 		if !validID(q.ID) {
 			httpError(w, 400, "bad id")
+			return
+		}
+		// load-append-save under the inbox lock: concurrent senders must not
+		// drop each other's registrations (re-load: the pre-check above ran
+		// before the body read and holds no lock)
+		s.inboxMu.Lock()
+		defer s.inboxMu.Unlock()
+		if bi = loadInbox(dir, slug); bi == nil || bi.Expires < time.Now().Unix() {
+			httpError(w, 404, "no such reverse share")
 			return
 		}
 		rb, _ := os.ReadFile(filepath.Join(dir, q.ID+".json"))
@@ -343,7 +381,17 @@ func (s *sessions) rshareIn(dir string) http.HandlerFunc {
 func rshareDelete(dir string, s *sessions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		i := s.identFrom(r)
+		if i == nil { // same answer as the other session-gated owner routes
+			httpError(w, 401, "sign in to manage reverse shares")
+			return
+		}
 		slug := r.PathValue("slug")
+		if !validSlug(slug) { // sole traversal gate before loadInbox joins the path
+			httpError(w, 404, "no such reverse share")
+			return
+		}
+		s.inboxMu.Lock() // a racing sender registration must not re-save a deleted inbox
+		defer s.inboxMu.Unlock()
 		bi := loadInbox(dir, slug)
 		if bi == nil || bi.Owner != i.ID {
 			httpError(w, 404, "no such reverse share")
@@ -798,7 +846,7 @@ func build(dir, createKey string) http.Handler {
 	mux.Handle("POST /api/paste", secure(rl.guard(authGate(createKey, hf(create(dir, owns))))))
 	mux.Handle("GET /api/paste/{id}", secure(hf(readAPI(dir))))
 	mux.Handle("GET /api/paste/{id}/blob", secure(hf(readBlob(dir))))
-	mux.Handle("DELETE /api/paste/{id}", secure(hf(deleteAPI(dir))))
+	mux.Handle("DELETE /api/paste/{id}", secure(hf(deleteAPI(dir, owns))))
 	mux.Handle("POST /api/uploads", secure(rl.guard(authGate(createKey, hf(uploadInit(dir, owns))))))
 	mux.Handle("PUT /api/uploads/{id}/{n}", secure(authGate(createKey, hf(uploadChunk(dir)))))
 	mux.Handle("DELETE /api/uploads/{id}", secure(hf(uploadAbort(dir))))
@@ -838,7 +886,14 @@ func build(dir, createKey string) http.Handler {
 	mux.Handle("POST /api/rshare/{slug}/in", secure(rl.guard(hf(sess.rshareIn(dir))))) // public: sender registers upload
 	mux.Handle("GET /dash", secure(hf(serveIndex)))                                    // dashboard SPA route
 	mux.Handle("GET /r/", secure(hf(serveIndex)))                                      // reverse-upload SPA route, slug parsed client-side
-	return mux
+	// CSRF: cookie-authenticated POSTs must not ride a cross-origin or
+	// same-site (sibling subdomain) form; requests without Sec-Fetch-Site and
+	// Origin (curl, scripts) pass, safe methods always pass
+	cop := http.NewCrossOriginProtection()
+	cop.SetDenyHandler(secure(hf(func(w http.ResponseWriter, _ *http.Request) {
+		httpError(w, 403, "cross-origin request blocked")
+	})))
+	return cop.Handler(mux)
 }
 
 func healthz(w http.ResponseWriter, _ *http.Request) {
@@ -1142,17 +1197,25 @@ func adminIdentityPromote(sess *sessions) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		target := loadIdentity(filepath.Join(sess.dir, "identities"), id)
-		if target == nil {
-			http.NotFound(w, r)
-			return
-		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 		var q struct {
 			Admin bool `json:"admin"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
 			httpError(w, 400, "invalid request body")
+			return
+		}
+		// guard + write under the store lock: two admins demoting each other
+		// concurrently must not both pass the last-admin check
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		if caller := sess.identFrom(r); caller == nil || !caller.Admin { // demoted while this request waited
+			httpError(w, 403, "admin needs an account")
+			return
+		}
+		target := loadIdentity(filepath.Join(sess.dir, "identities"), id)
+		if target == nil {
+			http.NotFound(w, r)
 			return
 		}
 		if target.Admin && !q.Admin {
@@ -1295,9 +1358,11 @@ func secure(next http.Handler) http.Handler {
 
 // ponytail: in-memory fixed-window limiter, correct for this single process;
 // back it with a shared store only if zeropaste ever runs as multiple replicas.
-// X-Forwarded-For: the LAST entry is used - the single trusted reverse proxy
-// in front appends the real client IP, so clients spoofing an earlier entry
-// only pollute their own chain, never shift their bucket.
+// Client key: peers on loopback/private networks are treated as the reverse
+// proxy and the LAST X-Forwarded-For entry (the one the proxy appended) names
+// the client; a public peer is the client itself and its XFF is ignored. A
+// proxy on a public IP therefore collapses all clients into its own bucket -
+// stricter, never bypassable.
 type limiter struct {
 	mu    sync.Mutex
 	hits  map[string]int
@@ -1309,25 +1374,37 @@ func newLimiter(limit int) *limiter {
 	return &limiter{hits: make(map[string]int), limit: limit}
 }
 
+// clientKey: the bucket for a request. IPv6 keys are masked to the /64 - one
+// client controls a whole /64, per-address buckets would be free rotation.
+func clientKey(r *http.Request) string {
+	peer := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(peer); err == nil {
+		peer = host
+	}
+	addr, err := netip.ParseAddr(peer)
+	if err != nil {
+		return peer
+	}
+	addr = addr.Unmap().WithZone("")
+	if addr.IsLoopback() || addr.IsPrivate() {
+		if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
+			last := xff[len(xff)-1]
+			last = last[strings.LastIndexByte(last, ',')+1:]
+			if a, err := netip.ParseAddr(strings.TrimSpace(last)); err == nil {
+				addr = a.Unmap().WithZone("")
+			}
+		}
+	}
+	if addr.Is6() {
+		p, _ := addr.Prefix(64)
+		return p.String()
+	}
+	return addr.String()
+}
+
 func (l *limiter) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := ""
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			for i := len(parts) - 1; i >= 0; i-- {
-				if p := strings.TrimSpace(parts[i]); p != "" {
-					ip = p
-					break
-				}
-			}
-		}
-		if ip == "" {
-			if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-				ip = host
-			} else {
-				ip = r.RemoteAddr
-			}
-		}
+		ip := clientKey(r)
 		l.mu.Lock()
 		now := time.Now()
 		if now.After(l.until) {
@@ -1516,6 +1593,10 @@ func create(dir string, owns *shareIndex) http.HandlerFunc {
 			}
 		}
 		b, _ := json.Marshal(paste{Data: req.Data, Salt: req.Salt, HL: req.HL, Burn: req.Burn, Public: req.Public, Expires: time.Now().Add(ttl).Unix()})
+		if !roomFor(dir, int64(len(b))) {
+			httpError(w, 507, "storage is full")
+			return
+		}
 		var id string
 		if req.Slug != "" {
 			// custom slug: O_EXCL turns a lost race into 409, never a silent overwrite
@@ -1593,11 +1674,12 @@ func readAPI(dir string) http.HandlerFunc {
 				// chunks, then the janitor reaps. Ciphertext is unreadable without
 				// the fragment key; a link unfurler sees none of it. Racing
 				// readers share the window (same ceiling class as text burns).
-				p.Expires = time.Now().Unix() - 1 + burnWindowSec // sweep treats `< now` strictly; start one second back
-				persistViews = true
-				if b, err := json.Marshal(p); err == nil {
-					os.WriteFile(path, b, 0o600)
+				// only ever SHORTEN: polling the meta must not keep a burn
+				// bundle alive past its TTL or its first grace window
+				if until := time.Now().Unix() - 1 + burnWindowSec; until < p.Expires { // sweep treats `< now` strictly; start one second back
+					p.Expires = until
 				}
+				persistViews = true
 			} else if err := os.Remove(path); err != nil {
 				log.Print(err)
 			} // text burn: file deleted, counter dies with it
@@ -1606,7 +1688,9 @@ func readAPI(dir string) http.HandlerFunc {
 		}
 		if persistViews {
 			if b, err := json.Marshal(p); err == nil {
-				os.WriteFile(path, b, 0o600)
+				if err := rewriteIfExists(path, b); err != nil {
+					log.Print(err)
+				}
 			}
 		}
 		out := map[string]any{"salt": p.Salt, "hl": p.HL, "burn": p.Burn, "expires": p.Expires, "views": p.Views, "public": p.Public}
@@ -1619,12 +1703,30 @@ func readAPI(dir string) http.HandlerFunc {
 	}
 }
 
-func deleteAPI(dir string) http.HandlerFunc {
+// deleteAPI: open by design for encrypted pastes (the passphrase-burn client
+// DELETEs after decrypting; the link is the capability). Public pastes never
+// need that - they are created signed-in, often under guessable slugs - so
+// only the identity holding the ownership row may delete them. Exception:
+// public BURN pastes - reading already destroys them, and the reader's
+// DELETE is how a burn bundle dies before its grace window runs out.
+func deleteAPI(dir string, owns *shareIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if !validID(id) {
 			http.NotFound(w, r)
 			return
+		}
+		var p paste
+		if b, err := os.ReadFile(filepath.Join(dir, id+".json")); err == nil && json.Unmarshal(b, &p) == nil && p.Public && !p.Burn {
+			i := owns.sess.identFrom(r)
+			if i == nil {
+				httpError(w, 403, "only the owner can delete a public paste")
+				return
+			}
+			if _, err := os.Stat(filepath.Join(owns.idents(i.ID), id+".json")); err != nil {
+				httpError(w, 403, "only the owner can delete a public paste")
+				return
+			}
 		}
 		if err := os.Remove(filepath.Join(dir, id+".json")); err != nil && !os.IsNotExist(err) {
 			httpError(w, 500, "delete failed")
@@ -1633,6 +1735,43 @@ func deleteAPI(dir string) http.HandlerFunc {
 		os.Remove(filepath.Join(dir, id+".blob")) // bundles die as a whole, burn flag or not
 		respond(w, 200, map[string]bool{"ok": true})
 	}
+}
+
+// rewriteIfExists updates a paste meta in place without O_CREATE: a DELETE
+// (or burn) that landed after our read must not be undone by the rewrite.
+func rewriteIfExists(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(b)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// freeBytes: space available to this (unprivileged) process under dir.
+func freeBytes(dir string) (int64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(dir, &st); err != nil {
+		return 0, err
+	}
+	return int64(st.Bavail) * int64(st.Bsize), nil
+}
+
+// roomFor: may n more bytes land without crossing the minFreeBytes floor?
+// Fails open - an unreadable statfs must not take the service down.
+func roomFor(dir string, n int64) bool {
+	free, err := freeBytes(dir)
+	if err != nil {
+		log.Print(err)
+		return true
+	}
+	return free-n >= minFreeBytes
 }
 
 func janitor(dir string) {
@@ -1674,6 +1813,17 @@ func sweep(dir string) {
 		name := e.Name()
 		if strings.HasSuffix(name, ".burn") {
 			os.Remove(filepath.Join(dir, name)) // leftovers from crashed burn reads
+			continue
+		}
+		if strings.HasSuffix(name, ".blob") {
+			// orphan blob (crash, lost race): no meta will ever reap it. The
+			// age guard keeps an in-flight finish (blob written before meta)
+			// safe - its mtime moves with every joined chunk.
+			if _, err := os.Stat(filepath.Join(dir, strings.TrimSuffix(name, ".blob")+".json")); os.IsNotExist(err) {
+				if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > time.Hour {
+					os.Remove(filepath.Join(dir, name))
+				}
+			}
 			continue
 		}
 		if !strings.HasSuffix(name, ".json") || name == "config.json" {
@@ -1782,6 +1932,10 @@ func uploadInit(dir string, owns *shareIndex) http.HandlerFunc {
 			httpError(w, 400, "blob size out of range")
 			return
 		}
+		if !roomFor(dir, req.Len) {
+			httpError(w, 507, "storage is full")
+			return
+		}
 		uploads := filepath.Join(dir, "uploads")
 		if err := os.MkdirAll(uploads, 0o700); err != nil {
 			log.Print(err)
@@ -1846,13 +2000,32 @@ func uploadChunk(dir string) http.HandlerFunc {
 			httpError(w, 400, "bad chunk index")
 			return
 		}
+		if !roomFor(dir, cfgChunk()) { // worst case: a full chunk
+			httpError(w, 507, "storage is full")
+			return
+		}
+		// stream to a temp file instead of buffering up to CHUNK in RAM; the
+		// rename makes the overwrite (= resume) atomic. Finish only reads
+		// <n>.part names and the session sweep removes strays with the dir.
 		r.Body = http.MaxBytesReader(w, r.Body, cfgChunk()+1)
-		part, err := io.ReadAll(r.Body)
-		if err != nil || int64(len(part)) < 1 || int64(len(part)) > cfgChunk() {
+		tmp, err := os.CreateTemp(rd, ".chunk-*")
+		if err != nil {
+			log.Print(err)
+			httpError(w, 500, "could not store chunk")
+			return
+		}
+		size, err := io.Copy(tmp, r.Body)
+		cerr := tmp.Close()
+		if err != nil || size < 1 || size > cfgChunk() {
+			os.Remove(tmp.Name())
 			httpError(w, 400, "chunk size out of range")
 			return
 		}
-		if err := os.WriteFile(filepath.Join(rd, fmt.Sprintf("%d.part", n)), part, 0o600); err != nil {
+		if err = cerr; err == nil {
+			err = os.Rename(tmp.Name(), filepath.Join(rd, fmt.Sprintf("%d.part", n)))
+		}
+		if err != nil {
+			os.Remove(tmp.Name())
 			log.Print(err)
 			httpError(w, 500, "could not store chunk")
 			return
@@ -1875,12 +2048,39 @@ func uploadAbort(dir string) http.HandlerFunc {
 
 // uploadFinish verifies the chunk set, joins it, promotes to a paste.
 func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
+	// per-session serialization: two racing finishes of one session would
+	// O_TRUNC each other's join and the loser's cleanup would delete the
+	// winner's blob under a live meta. A waiter re-runs after the winner and
+	// lands on the idempotent paths below.
+	type finLock struct {
+		sync.Mutex
+		n int
+	}
+	var mu sync.Mutex
+	busy := map[string]*finLock{}
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if !validID(id) {
 			http.NotFound(w, r)
 			return
 		}
+		mu.Lock()
+		l := busy[id]
+		if l == nil {
+			l = &finLock{}
+			busy[id] = l
+		}
+		l.n++
+		mu.Unlock()
+		l.Lock()
+		defer func() {
+			l.Unlock()
+			mu.Lock()
+			if l.n--; l.n == 0 {
+				delete(busy, id)
+			}
+			mu.Unlock()
+		}()
 		if cfgLocked() && owns.sess.identFrom(r) == nil { // v0.11: invite-only compose lane
 			httpError(w, 403, "sign in to paste on this locked instance")
 			return
@@ -1920,6 +2120,10 @@ func uploadFinish(dir string, owns *shareIndex) http.HandlerFunc {
 				httpError(w, 403, "sign in to create a public paste")
 				return
 			}
+		}
+		if !roomFor(dir, u.Len) { // the join briefly doubles usage: parts + blob
+			httpError(w, 507, "storage is full")
+			return
 		}
 		rd := filepath.Join(dir, "uploads", id)
 		chunks := chunksFor(u.Len, cfgChunk())
@@ -2155,30 +2359,48 @@ func (i *identity) WebAuthnCredentials() []webauthn.Credential {
 	return i.Creds
 }
 
-// sessions: HMAC-signed stateless cookie; the only server secret is
-// <dir>/.session.key (auto-generated once, 0600).
+// sessions: HMAC-signed stateless cookie; the only server secret is env
+// SESSION_SECRET when set, else <dir>/.session.key (auto-generated once, 0600).
+// ponytail: sessions are stateless - logout clears the client cookie only, a
+// copied token stays valid until exp. Rotating SESSION_SECRET (or deleting
+// .session.key when the env is unset) revokes every session at once.
 type sessions struct {
-	dir    string
-	secret []byte
+	dir     string
+	secret  []byte
+	mu      sync.Mutex // serializes identity-store mutations (register, login rewrite, rename, promote)
+	inboxMu sync.Mutex // serializes inbox read-modify-write (rshareIn, rshareDelete)
 }
 
 func newSessions(dir string) *sessions {
+	secret, err := loadSessionSecret(dir)
+	if err != nil {
+		log.Fatal(err) // a broken secret config must fail loudly, like a corrupt config.json
+	}
+	return &sessions{dir: dir, secret: secret}
+}
+
+// loadSessionSecret: a set SESSION_SECRET wins (an explicit operator knob must
+// take effect) and never touches the disk; otherwise the key file, created on
+// first boot.
+func loadSessionSecret(dir string) ([]byte, error) {
+	if env := os.Getenv("SESSION_SECRET"); env != "" {
+		if len(env) < 32 {
+			return nil, fmt.Errorf("SESSION_SECRET: %d bytes is too short, want at least 32", len(env))
+		}
+		return []byte(env), nil
+	}
 	keyPath := filepath.Join(dir, ".session.key")
 	secret, err := os.ReadFile(keyPath)
 	if err != nil || len(secret) != 32 {
-		if os.Getenv("SESSION_SECRET") != "" {
-			secret = []byte(os.Getenv("SESSION_SECRET"))
-		} else {
-			secret = make([]byte, 32)
-			if _, err := rand.Read(secret); err != nil {
-				log.Fatal(err)
-			}
+		secret = make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return nil, err
 		}
 		if err := os.WriteFile(keyPath, secret, 0o600); err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 	}
-	return &sessions{dir: dir, secret: secret}
+	return secret, nil
 }
 
 type sessionClaims struct {
@@ -2327,79 +2549,97 @@ func hmacEqual(a, b []byte) bool {
 
 // ceremony: holds in-flight webauthn register/login states in memory
 // (single-instance design mandate; server restart drops pending ceremonies).
+// Entries live ceremonyTTL; every insert prunes stale ones and the total is
+// capped so begin floods cannot grow memory without bound.
 type ceremony struct {
 	mu  sync.Mutex
-	reg map[string]webauthn.SessionData
-	log map[string]webauthn.SessionData
-	// pending ceremony identity users (registration path); identity files
-	// are written only when finish succeeds.
-	tokens map[string]*identity
-	// invite token accepted at begin (empty = none); finish re-validates it
-	// and consumes a use
-	invites map[string]string
+	reg map[string]pendingReg
+	log map[string]pendingLog
 }
+
+// pendingReg: everything a registration finish needs. The identity file is
+// written only when finish succeeds; invite = token accepted at begin (empty
+// = none), re-validated and consumed at finish; attach = signed-in begin
+// adding a passkey to an existing identity.
+type pendingReg struct {
+	sd     webauthn.SessionData
+	user   *identity
+	invite string
+	attach bool
+	at     time.Time
+}
+
+type pendingLog struct {
+	sd webauthn.SessionData
+	at time.Time
+}
+
+const ceremonyTTL = 2 * time.Minute
+
+var (
+	ceremonyNow = time.Now // test seam: age entries without sleeping
+	ceremonyCap = 10000    // pending register+login entries across all clients
+)
 
 func newCeremony() *ceremony {
 	return &ceremony{
-		reg:     map[string]webauthn.SessionData{},
-		log:     map[string]webauthn.SessionData{},
-		tokens:  map[string]*identity{},
-		invites: map[string]string{},
+		reg: map[string]pendingReg{},
+		log: map[string]pendingLog{},
 	}
 }
 
-func (c *ceremony) putInvite(id, token string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.invites[id] = token
-}
-func (c *ceremony) inviteOf(id string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.invites[id]
-}
-
-func (c *ceremony) pending(id string) (*identity, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	u, ok := c.tokens[id]
-	delete(c.tokens, id)
-	return u, ok
-}
-
-func (c *ceremony) setPending(id string, u *identity) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.tokens[id] = u
-}
-
-func (c *ceremony) putReg(id string, s webauthn.SessionData) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.reg[id] = s
-}
-func (c *ceremony) getReg(id string) (webauthn.SessionData, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	s, ok := c.reg[id]
-	if ok {
-		delete(c.reg, id)
+// room prunes stale entries and reports whether one more fits; caller holds mu.
+func (c *ceremony) room(now time.Time) bool {
+	for id, e := range c.reg {
+		if now.Sub(e.at) > ceremonyTTL {
+			delete(c.reg, id)
+		}
 	}
-	return s, ok
-}
-func (c *ceremony) putLog(id string, s webauthn.SessionData) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.log[id] = s
-}
-func (c *ceremony) getLog(id string) (webauthn.SessionData, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	s, ok := c.log[id]
-	if ok {
-		delete(c.log, id)
+	for id, e := range c.log {
+		if now.Sub(e.at) > ceremonyTTL {
+			delete(c.log, id)
+		}
 	}
-	return s, ok
+	return len(c.reg)+len(c.log) < ceremonyCap
+}
+
+func (c *ceremony) putReg(id string, e pendingReg) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := ceremonyNow()
+	if !c.room(now) {
+		return false
+	}
+	e.at = now
+	c.reg[id] = e
+	return true
+}
+
+func (c *ceremony) takeReg(id string) (pendingReg, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.reg[id]
+	delete(c.reg, id)
+	return e, ok && ceremonyNow().Sub(e.at) <= ceremonyTTL
+}
+
+func (c *ceremony) putLog(id string, sd webauthn.SessionData) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := ceremonyNow()
+	if !c.room(now) {
+		return false
+	}
+	c.log[id] = pendingLog{sd: sd, at: now}
+	return true
+}
+
+func (c *ceremony) takeLog(id string) (webauthn.SessionData, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.log[id]
+	delete(c.log, id)
+	return e.sd, ok && ceremonyNow().Sub(e.at) <= ceremonyTTL
 }
 
 // rpFromRequest derives the webauthn config from the request: RPID = host
@@ -2416,6 +2656,11 @@ func rpFromRequest(r *http.Request) *webauthn.WebAuthn {
 		RPID:          rpID,
 		RPDisplayName: "zeropaste",
 		RPOrigins:     []string{"https://" + originHost, "http://" + originHost},
+		// server-side expiry matches the ceremony map window
+		Timeouts: webauthn.TimeoutsConfig{
+			Login:        webauthn.TimeoutConfig{Enforce: true, Timeout: ceremonyTTL, TimeoutUVD: ceremonyTTL},
+			Registration: webauthn.TimeoutConfig{Enforce: true, Timeout: ceremonyTTL, TimeoutUVD: ceremonyTTL},
+		},
 	})
 	if err != nil {
 		// the lib rejects IP-literal RP IDs ("not a domain"); surface why in the log
@@ -2464,7 +2709,8 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 		var q req
 		_ = json.NewDecoder(r.Body).Decode(&q) // name optional; anonymous register allowed
-		if ok, why := s.inviteGate(q.Invite); !ok && s.identFrom(r) == nil {
+		existing := s.identFrom(r)
+		if ok, why := s.inviteGate(q.Invite); !ok && existing == nil {
 			httpError(w, 403, why)
 			return
 		}
@@ -2477,7 +2723,6 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 			httpError(w, 500, "ceremony failed")
 			return
 		}
-		existing := s.identFrom(r)
 		var user identity
 		id := newSessionID()
 		if existing != nil {
@@ -2495,39 +2740,40 @@ func (s *sessions) registerBegin(c *ceremony) http.HandlerFunc {
 			httpError(w, 500, "ceremony failed")
 			return
 		}
-		c.putReg(id, *sd)
-		c.setPending(id, &user) // the pending identity rides in memory; not yet on disk
-		c.putInvite(id, q.Invite)
+		// the pending identity rides in memory; not yet on disk
+		if !c.putReg(id, pendingReg{sd: *sd, user: &user, invite: q.Invite, attach: existing != nil}) {
+			httpError(w, 429, "too many pending sign-ins, try again shortly")
+			return
+		}
 		respond(w, 200, map[string]any{"options": creation, "sessionId": id, "name": user.Name})
 	}
 }
 
 func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// same gate as begin: a ceremony window (2 min) must not outlive a
-		// registration switch flip mid-enrollment
 		body, sid, ok := readCeremonyBody(w, r)
 		if !ok {
 			return
 		}
-		token := c.inviteOf(sid)
-		if ok, why := s.inviteGate(token); !ok && s.identFrom(r) == nil {
-			httpError(w, 403, why)
-			return
-		}
-		sd, found := c.getReg(sid)
+		// one-shot: the entry (session data, pending identity, invite) leaves
+		// the map here, whatever the outcome below
+		p, found := c.takeReg(sid)
 		if !found {
 			httpError(w, 400, "unknown session")
 			return
 		}
+		// same gate as begin: a ceremony window (2 min) must not outlive a
+		// registration switch flip mid-enrollment. Cheap pre-check; the
+		// authoritative one runs under the store lock below.
+		if !p.attach {
+			if ok, why := s.inviteGate(p.invite); !ok {
+				httpError(w, 403, why)
+				return
+			}
+		}
 		wa := rpFromRequest(r)
 		if wa == nil {
 			httpError(w, 500, "ceremony failed")
-			return
-		}
-		user, ok := c.pending(sid)
-		if !ok {
-			httpError(w, 400, "unknown session")
 			return
 		}
 		parsed, err := protocol.ParseCredentialCreationResponseBytes(body)
@@ -2536,21 +2782,43 @@ func (s *sessions) registerFinish(c *ceremony, owns *shareIndex) http.HandlerFun
 			httpError(w, 400, "registration failed")
 			return
 		}
-		cred, err := wa.CreateCredential(user, sd, parsed)
+		// signature/attestation work happens before the store lock
+		cred, err := wa.CreateCredential(p.user, p.sd, parsed)
 		if err != nil {
 			log.Print(err)
 			httpError(w, 400, "registration failed")
 			return
 		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		idents := filepath.Join(s.dir, "identities")
+		if findIdentityByCred(idents, cred.ID) != nil { // a credential belongs to exactly one identity
+			httpError(w, 400, "registration failed")
+			return
+		}
+		user := p.user
+		if p.attach {
+			// fresh read: the begin-time snapshot would roll back renames,
+			// promotions and other attaches that landed mid-ceremony
+			if user = loadIdentity(idents, p.user.ID); user == nil {
+				httpError(w, 400, "registration failed")
+				return
+			}
+		} else {
+			if ok, why := s.inviteGate(p.invite); !ok { // re-check: invite uses / first-user window
+				httpError(w, 403, why)
+				return
+			}
+			user.Admin = s.identCount() == 0 // the first registrant owns the instance
+		}
 		user.Creds = append(user.Creds, *cred)
-		user.Admin = s.identCount() == 0 // the first registrant owns the instance
 		if err := s.saveIdentity(user); err != nil {
 			log.Print(err)
 			httpError(w, 500, "could not store identity")
 			return
 		}
-		if token != "" {
-			s.inviteConsume(token) // only after the identity is safely on disk
+		if !p.attach && p.invite != "" {
+			s.inviteConsume(p.invite) // only after the identity is safely on disk
 		}
 		if owns != nil {
 			owns.attach(user.ID)
@@ -2580,7 +2848,10 @@ func (s *sessions) loginBegin(c *ceremony) http.HandlerFunc {
 			return
 		}
 		token := newSessionID()
-		c.putLog(token, *sd)
+		if !c.putLog(token, *sd) {
+			httpError(w, 429, "too many pending sign-ins, try again shortly")
+			return
+		}
 		respond(w, 200, map[string]any{"options": assertion, "sessionId": token})
 	}
 }
@@ -2591,7 +2862,7 @@ func (s *sessions) loginFinish(c *ceremony) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		sd, found := c.getLog(sid)
+		sd, found := c.takeLog(sid)
 		if !found {
 			httpError(w, 400, "unknown session")
 			return
@@ -2628,7 +2899,14 @@ func (s *sessions) loginFinish(c *ceremony) http.HandlerFunc {
 			httpError(w, 401, "login failed")
 			return
 		}
-		// update the stored credential (sign counters, transports)
+		// update the stored credential (sign counters, transports) on a fresh
+		// read under the store lock - the copy the lib verified may be stale
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if ident = loadIdentity(idents, ident.ID); ident == nil {
+			httpError(w, 401, "login failed")
+			return
+		}
 		for idx := range ident.Creds {
 			if bytes.Equal(ident.Creds[idx].ID, updated.ID) {
 				ident.Creds[idx] = *updated
@@ -2893,6 +3171,12 @@ func (s *sessions) identityName() http.HandlerFunc {
 		name := strings.TrimSpace(q.Name)
 		if name == "" || len(name) > 64 {
 			httpError(w, 400, "name must be 1-64 characters")
+			return
+		}
+		s.mu.Lock() // reload under the store lock: a stale copy must not undo a concurrent attach/promote
+		defer s.mu.Unlock()
+		if i = loadIdentity(filepath.Join(s.dir, "identities"), i.ID); i == nil {
+			httpError(w, 401, "authorization required")
 			return
 		}
 		i.Name = name

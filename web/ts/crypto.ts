@@ -1,6 +1,8 @@
 import { enc, dec } from "./dom";
 
 const PBKDF2_ITERATIONS = 600000; // OWASP recommendation for PBKDF2-HMAC-SHA256
+// a raw AES-256 key in a link: 32 bytes = exactly 43 base64url chars, no padding
+export const KEY_B64U = /^[A-Za-z0-9_-]{43}$/;
 
 export function b64uFromBytes(bytes: Uint8Array): string {
   let s = "";

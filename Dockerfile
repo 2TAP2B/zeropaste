@@ -1,5 +1,7 @@
-# build
-FROM golang:1.26-alpine AS build
+# build - base images pinned by tag AND digest: reproducible, tamper-evident
+# builds; Dependabot (docker) proposes the patch bumps, which doubles as the
+# "Go security release landed" signal (ci.yml audits this exact toolchain)
+FROM golang:1.26.11-alpine@sha256:ecb67f987aa1a57794c91d19ade7ae0209f2f0f5496aaef9e6ae85ddf92d02ab AS build
 WORKDIR /src
 COPY go.mod go.sum main.go ./
 COPY web/ ./web/
@@ -9,7 +11,7 @@ ARG VERSION=""
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/paste .
 
 # seeded data dir so named volumes inherit non-root ownership
-FROM alpine AS data
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS data
 RUN mkdir /data && chown 65534:65534 /data
 
 # run

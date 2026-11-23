@@ -22,4 +22,8 @@ Optionally protect an inbox with a passphrase instead of a fragment key: senders
 
 ## recovery of a lost key
 
-If your browser loses the stashed fragment key for an inbox, its row carries a *key missing* chip and the expanded detail shows a repair field: paste the original drop link back into this browser and the key re-stashes. Recreating the uplink is **not** a recovery - a fresh key orphans every upload already sent with the old one.
+If your browser loses the stashed fragment key for an inbox, its row carries a *key missing* chip and the expanded detail shows a repair field: paste the original drop link back into this browser and the key re-stashes. Opening your own intact drop link in this browser heals the row too.
+
+The drop-link page only ever **fills a missing key** - it never replaces one this browser already holds, so a crafted `/r/<your-slug>#<other-key>` link sent to you cannot swap your key. If a row's arrivals won't open because you recreated the slug on another device, use the same field (it reads *Replace* when a key is present) with the current drop link.
+
+Recreating the uplink is **not** a recovery - a fresh key orphans every upload already sent with the old one.

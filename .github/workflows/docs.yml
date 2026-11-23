@@ -4,48 +4,57 @@ on:
   push:
     branches: [main]
     paths: ["docs/**", "theme/**", "rspress.config.ts", "package.json", "package-lock.json", ".github/workflows/docs.yml"]
+  pull_request: # build-only check (e.g. Dependabot npm bumps); deploy is skipped
+    paths: ["docs/**", "theme/**", "rspress.config.ts", "package.json", "package-lock.json", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: read # checkout
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: docs-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # lastUpdated for the page footer
+          persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+          node-version: 24
       - name: Build docs (lockfile-pinned)
         run: |
           npm ci --no-audit --no-fund
           npm run docs:build
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: doc_build
 
+  # the only job holding pages/id-token: npm ci above runs third-party
+  # install scripts and must not be able to publish the site
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     name: Deploy
+    permissions:
+      pages: write # publish the artifact
+      id-token: write # deploy-pages proves the run's identity via OIDC
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -131,6 +131,13 @@ async function fetchRangeExact(
 async function renderBundle(paste: PasteRec, key: AesKey | null): Promise<void> {
   const head = await fetchRangeExact(paste, 0, key ? MANIFEST_HEAD : 4);
   const { mlen, manifestStart } = key ? await parseEnvHead(head) : parsePublicHead(head);
+  // the envelope is author-controlled and every number in it sizes a buffer
+  // (fetchRangeExact allocates what it is asked for): the manifest, then
+  // every file + thumb, must fit the stored blob - else a crafted bundle
+  // makes each reader allocate and range-fetch whatever it claims
+  const total = paste.len ?? 0;
+  const damaged = "This bundle is damaged - its file list does not match the stored data.";
+  if (manifestStart + mlen > total) return fail(damaged);
   const mraw = await fetchRangeExact(paste, manifestStart, mlen);
   let manifest: Manifest;
   try {
@@ -140,6 +147,13 @@ async function renderBundle(paste: PasteRec, key: AesKey | null): Promise<void> 
   } catch {
     return fail("Decryption failed - the link was probably altered or truncated.");
   }
+  const sizeOk = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
+  let need = manifestStart + mlen;
+  for (const f of Array.isArray(manifest.files) ? manifest.files : [null]) {
+    if (!f || !sizeOk(f.size) || (f.thumb && !sizeOk(f.thumb.size))) need = Infinity;
+    else need += f.size + (f.thumb?.size ?? 0);
+  }
+  if (need > total) return fail(damaged);
   // link validated: bundles burn via this DELETE after the envelope opens
   // note renders through the existing paste-view code block (copy icon rides along)
   const openBlob = key

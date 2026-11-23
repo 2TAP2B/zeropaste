@@ -31,14 +31,18 @@ in
     };
 
     createKeyFile = mkOption {
-      type = types.nullOr types.path;
+      # an absolute path STRING, never a path literal: a literal (./secret.env)
+      # is copied into the world-readable store - the leak this option avoids
+      type = types.nullOr (types.strMatching "/.+");
       default = null;
+      example = "/run/secrets/zeropaste.env";
       description = ''
-        Path to a root-owned file with a `CREATE_KEY=<secret>` line. When set,
-        POST /api/paste requires Authorization: Bearer <secret>; reads and
-        burns stay open (the link is the capability). Leave null for a fully
-        public instance. Kept out of the option system on purpose so the
-        secret never lands in the world-readable store.
+        Absolute path (as a string) to a root-owned file with a
+        `CREATE_KEY=<secret>` line. When set, POST /api/paste requires
+        Authorization: Bearer <secret>; reads and burns stay open (the link is
+        the capability). Leave null for a fully public instance. Kept out of
+        the option system on purpose so the secret never lands in the
+        world-readable store.
       '';
     };
 
@@ -63,6 +67,7 @@ in
         ExecStart = "${cfg.package}/bin/zeropaste -addr ${cfg.listenAddress} -data /var/lib/zeropaste";
         EnvironmentFile = mkIf (cfg.createKeyFile != null) [ cfg.createKeyFile ];
         StateDirectory = "zeropaste"; # /var/lib/zeropaste, emitted per DynamicUser
+        StateDirectoryMode = "0700"; # systemd defaults to 0755; the app's own dirs are 0700
         DynamicUser = true;
         # admin-driven reboot (dash config tab) exits with code 0; on-failure
         # would leave the service stopped, so always restart
@@ -70,6 +75,7 @@ in
         RestartSec = 5;
 
         # hardening: the server is two flags and a static dir - sandbox it tight
+        UMask = "0077";
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
@@ -77,7 +83,12 @@ in
         PrivateDevices = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
+        ProtectKernelLogs = true;
         ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        ProtectProc = "invisible";
+        ProcSubset = "pid";
         RestrictAddressFamilies = [
           "AF_INET"
           "AF_INET6"
@@ -86,6 +97,7 @@ in
         RestrictRealtime = true;
         RestrictSUIDSGID = true;
         LockPersonality = true;
+        MemoryDenyWriteExecute = true; # Go never maps W+X pages (no JIT)
         CapabilityBoundingSet = [ ];
         SystemCallArchitectures = "native";
         SystemCallFilter = [ "@system-service" ];

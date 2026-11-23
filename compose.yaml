@@ -9,6 +9,10 @@ services:
     volumes:
       - paste-data:/data
     restart: unless-stopped
+    # hardening, no behaviour change: the app writes only to /data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     # environment:                 # all optional
     #   CREATE_KEY: "change-me"       # site passphrase in front of creates
     #   USER_ACCOUNTS: "true"         # "false" disables accounts entirely
