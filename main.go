@@ -205,7 +205,7 @@ func (s *sessions) rshareCreate(dir string) http.HandlerFunc {
 			httpError(w, 500, "could not open inbox area")
 			return
 		}
-		if cfgMaxShares() > 0 && s.inboxesOwned(dir, i.ID) >= int(cfgMaxShares()) {
+		if cfgMaxShares() > 0 && int64(s.inboxesOwned(dir, i.ID)) >= cfgMaxShares() {
 			httpError(w, 403, "share limit reached for this account")
 			return
 		}
@@ -3006,7 +3006,7 @@ func (si *shareIndex) mayCreate(r *http.Request) bool {
 		}
 		active++
 	}
-	return active < int(cfgMaxShares())
+	return int64(active) < cfgMaxShares()
 }
 
 // attach after a fresh registration makes previously created anon impossible;
